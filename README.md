@@ -47,8 +47,35 @@ Open:
 Run the tests:
 
 ```bash
-pytest
+pytest                 # unit tests (offline, fake Unleashed client) — 16 tests
 ```
+
+### Live Unleashed integration test
+
+Unit tests never touch the network. To validate against the **real** Unleashed
+API, run the integration tests (or the diagnostic) from an environment that can
+reach `api.unleashedsoftware.com` with real credentials:
+
+```bash
+# 1) quick read-only diagnostic (ping + list orders/customers/products)
+UNLEASHED_API_ID=... UNLEASHED_API_KEY=... python -m scripts.check_unleashed
+
+# 2) read-only integration tests (auth/signature + GETs)
+UNLEASHED_API_ID=... UNLEASHED_API_KEY=... pytest -m integration
+
+# 3) also exercise a create -> read round-trip (creates ONE reusable Parked draft)
+UNLEASHED_SANDBOX_WRITE=true \
+UNLEASHED_TEST_CUSTOMER_CODE=KTOWN \
+UNLEASHED_TEST_PRODUCT_CODE=OATMILK \
+pytest -m integration
+```
+
+The integration tests **skip** automatically when credentials are absent, so CI
+without secrets stays green. The write round-trip uses a fixed Guid, so repeats
+update the same draft order instead of piling up new ones (and demonstrate
+Guid-first idempotency live). Set `UNLEASHED_FULFILL_WAREHOUSE_CODE` (and, if your
+account requires them, `UNLEASHED_DEFAULT_CURRENCY` / `UNLEASHED_DEFAULT_TAX_CODE`)
+before running the write test.
 
 ---
 

@@ -7,9 +7,11 @@ import tempfile
 # Must be set BEFORE importing app modules (engine is built at import time).
 _DB_PATH = os.path.join(tempfile.gettempdir(), "cafe_test.db")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_DB_PATH}")
-os.environ.setdefault("UNLEASHED_API_ID", "test-id")
-os.environ.setdefault("UNLEASHED_API_KEY", "test-key")
 os.environ.setdefault("SECRET_KEY", "test-secret")
+# NOTE: we deliberately do NOT set dummy UNLEASHED_API_ID/KEY here. Unit tests
+# always inject FakeUnleashedClient, and leaving these unset lets the live
+# integration tests (tests/test_unleashed_integration.py) read the operator's
+# real credentials from env/.env without being shadowed by test defaults.
 
 import pytest  # noqa: E402
 
