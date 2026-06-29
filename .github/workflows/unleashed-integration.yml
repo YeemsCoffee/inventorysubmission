@@ -1,0 +1,55 @@
+name: Unleashed integration (live)
+
+# Hits the REAL Unleashed API using credentials stored in GitHub repo secrets.
+# Never runs on pull_request (so secrets are never exposed to fork PRs).
+on:
+  workflow_dispatch:
+    inputs:
+      run_write_test:
+        description: "Also run the create→read round-trip (creates ONE reusable Parked draft order)"
+        type: boolean
+        default: false
+  schedule:
+    # Weekly read-only health check (Mon 07:00 UTC). Runs from the default branch.
+    - cron: "0 7 * * 1"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      # Sensitive — store as repo *secrets*:
+      UNLEASHED_API_ID: ${{ secrets.UNLEASHED_API_ID }}
+      UNLEASHED_API_KEY: ${{ secrets.UNLEASHED_API_KEY }}
+      # Non-sensitive — store as repo *variables* (only needed for the write test):
+      UNLEASHED_FULFILL_WAREHOUSE_CODE: ${{ vars.UNLEASHED_FULFILL_WAREHOUSE_CODE }}
+      UNLEASHED_DEFAULT_CURRENCY: ${{ vars.UNLEASHED_DEFAULT_CURRENCY }}
+      UNLEASHED_DEFAULT_TAX_CODE: ${{ vars.UNLEASHED_DEFAULT_TAX_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify credentials are configured
+        run: |
+          if [ -z "$UNLEASHED_API_ID" ] || [ -z "$UNLEASHED_API_KEY" ]; then
+            echo "::error::Missing secrets. Add UNLEASHED_API_ID and UNLEASHED_API_KEY under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Connectivity diagnostic (read-only)
+        run: python -m scripts.check_unleashed
+
+      - name: Read-only integration tests
+        run: pytest -m integration
+
+      - name: Create→read round-trip (opt-in; creates a reusable Parked draft)
+        if: ${{ inputs.run_write_test }}
+        env:
+          UNLEASHED_SANDBOX_WRITE: "true"
+          UNLEASHED_TEST_CUSTOMER_CODE: ${{ vars.UNLEASHED_TEST_CUSTOMER_CODE }}
+          UNLEASHED_TEST_PRODUCT_CODE: ${{ vars.UNLEASHED_TEST_PRODUCT_CODE }}
+        run: pytest -m integration -k roundtrip
