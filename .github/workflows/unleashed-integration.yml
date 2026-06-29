@@ -25,8 +25,8 @@ jobs:
       UNLEASHED_DEFAULT_CURRENCY: ${{ vars.UNLEASHED_DEFAULT_CURRENCY }}
       UNLEASHED_DEFAULT_TAX_CODE: ${{ vars.UNLEASHED_DEFAULT_TAX_CODE }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
