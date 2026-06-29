@@ -6,6 +6,9 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Make the repo root importable (so `import app` works under bare `pytest`, not
+# just `python -m pytest`).
+pythonpath = ["."]
 # Exclude live integration tests by default; run them with `pytest -m integration`.
 addopts = "-q -m 'not integration'"
 markers = [

@@ -44,7 +44,7 @@ jobs:
         run: python -m scripts.check_unleashed
 
       - name: Read-only integration tests
-        run: pytest -m integration
+        run: python -m pytest -m integration
 
       - name: Create→read round-trip (opt-in; creates a reusable Parked draft)
         if: ${{ inputs.run_write_test }}
@@ -52,4 +52,4 @@ jobs:
           UNLEASHED_SANDBOX_WRITE: "true"
           UNLEASHED_TEST_CUSTOMER_CODE: ${{ vars.UNLEASHED_TEST_CUSTOMER_CODE }}
           UNLEASHED_TEST_PRODUCT_CODE: ${{ vars.UNLEASHED_TEST_PRODUCT_CODE }}
-        run: pytest -m integration -k roundtrip
+        run: python -m pytest -m integration -k roundtrip
