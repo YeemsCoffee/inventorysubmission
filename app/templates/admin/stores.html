@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Stores{% endblock %}
+{% block content %}
+<h1>Stores</h1>
+<p class="muted">Each store maps to an Unleashed <b>customer</b> (not a warehouse).</p>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Code</th><th>Name</th><th>Unleashed Customer</th><th>Active</th></tr></thead>
+    <tbody>
+      {% for s in stores %}
+      <tr>
+        <td>{{ s.store_code }}</td><td>{{ s.store_name }}</td>
+        <td>{{ s.unleashed_customer_code }}{% if s.unleashed_customer_guid %} <span class="muted">({{ s.unleashed_customer_guid[:8] }}…)</span>{% endif %}</td>
+        <td>{{ '✓' if s.active else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add / edit store</h2>
+  <form method="post" action="/admin/stores">
+    <div class="row">
+      <div><label>ID (blank = new)</label><input type="number" name="id"></div>
+      <div><label>Store code</label><input type="text" name="store_code" required placeholder="KTOWN"></div>
+      <div><label>Store name</label><input type="text" name="store_name" required placeholder="Ktown"></div>
+    </div>
+    <div class="row">
+      <div><label>Unleashed customer code</label><input type="text" name="unleashed_customer_code" required placeholder="KTOWN"></div>
+      <div><label>Unleashed customer GUID (optional)</label><input type="text" name="unleashed_customer_guid"></div>
+      <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <button class="btn" style="margin-top:14px" type="submit">Save store</button>
+  </form>
+</div>
+{% endblock %}

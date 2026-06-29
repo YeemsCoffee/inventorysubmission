@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Tags{% endblock %}
+{% block content %}
+<h1>QR / NFC Tags</h1>
+<p class="muted">Encode each Scan URL into a QR code or NFC tag and stick it on the back-storage shelf.</p>
+<div class="card">
+  <table>
+    <thead><tr><th>Store</th><th>Product</th><th>Tag ID</th><th>Scan URL</th></tr></thead>
+    <tbody>
+      {% for inv, product, store in rows %}
+      <tr>
+        <td>{{ store.store_name }}</td>
+        <td>{{ product.display_name }}</td>
+        <td><code>{{ inv.tag_id }}</code></td>
+        <td><a href="{{ base_url }}/scan/{{ inv.tag_id }}">{{ base_url }}/scan/{{ inv.tag_id }}</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No tags assigned yet. Add a Tag ID on an item in Store Inventory.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="muted">Tip: <code>python scripts/generate_tags.py</code> prints these URLs for bulk QR generation.</p>
+{% endblock %}

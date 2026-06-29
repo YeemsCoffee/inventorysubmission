@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% set hide_nav = True %}
+{% block title %}Tag not found{% endblock %}
+{% block main_class %}scan-wrap{% endblock %}
+{% block content %}
+  <div class="scan-name">Tag not recognised</div>
+  <p class="muted">This tag (<code>{{ tag_id }}</code>) isn't linked to a product yet.
+  Please tell your manager so they can set it up.</p>
+{% endblock %}

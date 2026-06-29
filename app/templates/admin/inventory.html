@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Store Inventory{% endblock %}
+{% block content %}
+<h1>Store Inventory / Par Levels / Tags</h1>
+
+<form method="get" action="/admin/inventory" class="card">
+  <label for="store_id">Store</label>
+  <select id="store_id" name="store_id" onchange="this.form.submit()" style="max-width:280px">
+    {% for s in stores %}<option value="{{ s.id }}" {{ 'selected' if s.id == store_id }}>{{ s.store_name }}</option>{% endfor %}
+  </select>
+</form>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Product</th><th class="right">Count</th><th class="right">Par</th><th class="right">Min</th>
+        <th>Location</th><th>Tag</th><th>Scan URL</th></tr></thead>
+    <tbody>
+      {% for inv, product in rows %}
+      <tr>
+        <td>{{ product.display_name }} <span class="muted">({{ product.product_code }})</span></td>
+        <td class="right">{{ inv.current_count | qty }}</td>
+        <td class="right">{{ inv.par_level | qty }}</td>
+        <td class="right">{{ inv.minimum_level | qty }}</td>
+        <td>{{ inv.storage_location or '—' }}</td>
+        <td>{{ inv.tag_id or '—' }}</td>
+        <td>{% if inv.tag_id %}<a href="{{ base_url }}/scan/{{ inv.tag_id }}">/scan/{{ inv.tag_id }}</a>{% else %}—{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No items for this store yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add / edit store item</h2>
+  <form method="post" action="/admin/inventory">
+    <input type="hidden" name="store_id" value="{{ store_id }}">
+    <div class="row">
+      <div><label>Row ID (blank = new)</label><input type="number" name="id"></div>
+      <div><label>Product</label>
+        <select name="product_id" required>
+          {% for p in products %}<option value="{{ p.id }}">{{ p.display_name }} ({{ p.product_code }})</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Initial count (new rows only)</label><input type="number" name="current_count" value="0" step="1"></div>
+      <div><label>Par level</label><input type="number" name="par_level" value="0" step="1"></div>
+      <div><label>Minimum level</label><input type="number" name="minimum_level" value="0" step="1"></div>
+    </div>
+    <div class="row">
+      <div><label>Storage location</label><input type="text" name="storage_location" placeholder="Back Storage A"></div>
+      <div><label>Tag ID (QR/NFC)</label><input type="text" name="tag_id" placeholder="KTOWN-OATMILK"></div>
+      <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <button class="btn" style="margin-top:14px" type="submit">Save item</button>
+  </form>
+  <p class="muted">Counts change only through scans, receipts, and manager corrections — editing the count here applies only when creating a new row.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,17 @@
+[project]
+name = "cafe-inventory-replenishment"
+version = "0.1.0"
+description = "Café store inventory + replenishment MVP integrating with Unleashed Software"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Make the repo root importable (so `import app` works under bare `pytest`, not
+# just `python -m pytest`).
+pythonpath = ["."]
+# Exclude live integration tests by default; run them with `pytest -m integration`.
+addopts = "-q -m 'not integration'"
+markers = [
+    "integration: live tests that hit the real Unleashed API (require credentials + network)",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

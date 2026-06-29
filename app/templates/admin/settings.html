@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Unleashed Settings{% endblock %}
+{% block content %}
+<h1>Unleashed API Settings</h1>
+<p class="muted">Credentials are read from backend environment variables only and are never shown or stored in the app.</p>
+
+{% if test_result %}
+  <div class="flash {{ 'ok' if test_result.ok else 'error' }}">{{ test_result.message }}</div>
+{% endif %}
+
+<div class="card">
+  <table>
+    <tbody>
+      <tr><th>Credentials</th><td>
+        {% if v.configured %}<span class="pill ok">configured</span>{% else %}<span class="pill err">missing</span>{% endif %}
+        <span class="muted">(API ID {{ 'set' if v.api_id_set else 'not set' }}, API key {{ 'set' if v.api_key_set else 'not set' }})</span>
+      </td></tr>
+      <tr><th>API URL</th><td>{{ v.api_url }}</td></tr>
+      <tr><th>Fulfilling warehouse code</th><td>{{ v.fulfill_warehouse_code }}</td></tr>
+      <tr><th>Create order status</th><td>{{ v.create_order_status }} <span class="muted">(API allows Parked/Completed only)</span></td></tr>
+      <tr><th>Receipt source</th><td>{{ 'Sales Shipments (actual shipped qty)' if v.use_shipments else 'Completed order lines (fallback)' }}</td></tr>
+      <tr><th>Fallback to order lines</th><td>{{ 'Yes' if v.fallback_to_order else 'No' }}</td></tr>
+      <tr><th>Polling</th><td>{{ 'every %s min'|format(v.polling_interval_minutes) if v.polling_enabled else 'disabled' }}</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <form method="post" action="/admin/settings/test">
+    <button class="btn" type="submit">Test connection</button>
+    <span class="muted">Performs a small authenticated request to verify the HMAC signature and credentials.</span>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Webhook endpoint</h2>
+  <p>Register this URL as the destination of an Unleashed <b>Sales Order</b> webhook subscription:</p>
+  <p><code>{{ settings.base_url }}/webhooks/unleashed?secret=YOUR_WEBHOOK_SECRET</code></p>
+  <p class="muted">The secret must match <code>UNLEASHED_WEBHOOK_SECRET</code>. Polling runs regardless as a safety net.</p>
+</div>
+{% endblock %}

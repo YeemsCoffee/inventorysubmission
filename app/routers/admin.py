@@ -1,0 +1,245 @@
+"""Admin setup: stores, products, store inventory/par/tags, users, Unleashed settings."""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..config import get_settings
+from ..database import get_db
+from ..enums import Role
+from ..integrations.unleashed import UnleashedClient, UnleashedError
+from ..models import Product, Store, StoreInventory, User
+from ..security import hash_password, require_roles
+from ..templating import render
+
+router = APIRouter(prefix="/admin")
+
+AdminUser = Depends(require_roles(Role.ADMIN))
+
+
+@router.get("")
+def admin_home(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    settings = get_settings()
+    counts = {
+        "stores": db.query(Store).count(),
+        "products": db.query(Product).count(),
+        "inventory": db.query(StoreInventory).count(),
+        "users": db.query(User).count(),
+    }
+    return render(request, "admin/home.html", {"counts": counts, "unleashed_configured": settings.unleashed_configured})
+
+
+# ---- Stores ----------------------------------------------------------
+@router.get("/stores")
+def stores_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
+    return render(request, "admin/stores.html", {"stores": stores})
+
+
+@router.post("/stores")
+def stores_save(
+    request: Request,
+    id: int | None = Form(None),
+    store_code: str = Form(...),
+    store_name: str = Form(...),
+    unleashed_customer_code: str = Form(...),
+    unleashed_customer_guid: str = Form(""),
+    active: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    store = db.get(Store, id) if id else Store()
+    store.store_code = store_code.strip()
+    store.store_name = store_name.strip()
+    store.unleashed_customer_code = unleashed_customer_code.strip()
+    store.unleashed_customer_guid = unleashed_customer_guid.strip() or None
+    store.active = active
+    if not id:
+        db.add(store)
+    db.commit()
+    return RedirectResponse(url="/admin/stores", status_code=303)
+
+
+# ---- Products --------------------------------------------------------
+@router.get("/products")
+def products_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    products = list(db.execute(select(Product).order_by(Product.display_name)).scalars())
+    return render(request, "admin/products.html", {"products": products})
+
+
+@router.post("/products")
+def products_save(
+    request: Request,
+    id: int | None = Form(None),
+    product_code: str = Form(...),
+    display_name: str = Form(...),
+    category: str = Form(""),
+    unit_of_measure: str = Form("EA"),
+    case_quantity: int = Form(1),
+    unleashed_product_guid: str = Form(""),
+    active: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    product = db.get(Product, id) if id else Product()
+    product.product_code = product_code.strip()
+    product.display_name = display_name.strip()
+    product.category = category.strip() or None
+    product.unit_of_measure = unit_of_measure.strip() or "EA"
+    product.case_quantity = case_quantity or 1
+    product.unleashed_product_guid = unleashed_product_guid.strip() or None
+    product.active = active
+    if not id:
+        db.add(product)
+    db.commit()
+    return RedirectResponse(url="/admin/products", status_code=303)
+
+
+# ---- Store inventory / par / tags ------------------------------------
+@router.get("/inventory")
+def inventory_page(request: Request, store_id: int | None = None, db: Session = Depends(get_db), user: User = AdminUser):
+    stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
+    sid = store_id or (stores[0].id if stores else None)
+    rows = []
+    if sid:
+        rows = db.execute(
+            select(StoreInventory, Product)
+            .join(Product, Product.id == StoreInventory.product_id)
+            .where(StoreInventory.store_id == sid)
+            .order_by(Product.display_name)
+        ).all()
+    products = list(db.execute(select(Product).where(Product.active.is_(True)).order_by(Product.display_name)).scalars())
+    return render(
+        request,
+        "admin/inventory.html",
+        {"stores": stores, "store_id": sid, "rows": rows, "products": products, "base_url": get_settings().base_url},
+    )
+
+
+@router.post("/inventory")
+def inventory_save(
+    request: Request,
+    id: int | None = Form(None),
+    store_id: int = Form(...),
+    product_id: int = Form(...),
+    par_level: float = Form(0),
+    minimum_level: float = Form(0),
+    current_count: float = Form(0),
+    storage_location: str = Form(""),
+    tag_id: str = Form(""),
+    active: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    inv = db.get(StoreInventory, id) if id else StoreInventory(store_id=store_id, product_id=product_id)
+    inv.store_id = store_id
+    inv.product_id = product_id
+    inv.par_level = par_level
+    inv.minimum_level = minimum_level
+    # current_count is set here only at initial setup; thereafter it changes only
+    # via transaction-safe service functions (removals/receipts/adjustments).
+    if not id:
+        inv.current_count = current_count
+    inv.storage_location = storage_location.strip() or None
+    inv.tag_id = tag_id.strip() or None
+    inv.active = active
+    if not id:
+        db.add(inv)
+    db.commit()
+    return RedirectResponse(url=f"/admin/inventory?store_id={store_id}", status_code=303)
+
+
+@router.get("/tags")
+def tags_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    rows = db.execute(
+        select(StoreInventory, Product, Store)
+        .join(Product, Product.id == StoreInventory.product_id)
+        .join(Store, Store.id == StoreInventory.store_id)
+        .where(StoreInventory.tag_id.is_not(None))
+        .order_by(Store.store_name, Product.display_name)
+    ).all()
+    return render(request, "admin/tags.html", {"rows": rows, "base_url": get_settings().base_url})
+
+
+# ---- Users -----------------------------------------------------------
+@router.get("/users")
+def users_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    users = list(db.execute(select(User).order_by(User.name)).scalars())
+    stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
+    return render(request, "admin/users.html", {"users": users, "stores": stores, "roles": sorted(Role.ALL)})
+
+
+@router.post("/users")
+def users_save(
+    request: Request,
+    id: int | None = Form(None),
+    name: str = Form(...),
+    email: str = Form(...),
+    role: str = Form(Role.EMPLOYEE),
+    store_id: int | None = Form(None),
+    password: str = Form(""),
+    active: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    target = db.get(User, id) if id else User(email=email.strip().lower())
+    target.name = name.strip()
+    target.email = email.strip().lower()
+    target.role = role if role in Role.ALL else Role.EMPLOYEE
+    target.store_id = store_id or None
+    target.active = active
+    if password:
+        target.password_hash = hash_password(password)
+    if not id:
+        db.add(target)
+    db.commit()
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+# ---- Unleashed settings ---------------------------------------------
+@router.get("/settings")
+def settings_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    s = get_settings()
+    view = {
+        "configured": s.unleashed_configured,
+        "api_url": s.unleashed_api_url,
+        "fulfill_warehouse_code": s.unleashed_fulfill_warehouse_code,
+        "create_order_status": s.unleashed_create_order_status,
+        "use_shipments": s.unleashed_receipt_use_shipments,
+        "fallback_to_order": s.unleashed_receipt_fallback_to_order,
+        "polling_enabled": s.polling_enabled,
+        "polling_interval_minutes": s.polling_interval_minutes,
+        # Secrets are NEVER rendered — only whether they are present.
+        "api_id_set": bool(s.unleashed_api_id),
+        "api_key_set": bool(s.unleashed_api_key),
+    }
+    return render(request, "admin/settings.html", {"v": view, "test_result": None})
+
+
+@router.post("/settings/test")
+def settings_test(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+    s = get_settings()
+    test_result = {"ok": False, "message": ""}
+    if not s.unleashed_configured:
+        test_result["message"] = "Credentials not configured (set UNLEASHED_API_ID / UNLEASHED_API_KEY)."
+    else:
+        try:
+            UnleashedClient().ping()
+            test_result = {"ok": True, "message": "Connected to Unleashed successfully."}
+        except UnleashedError as exc:
+            test_result["message"] = f"Connection failed: {exc}"
+    view = {
+        "configured": s.unleashed_configured,
+        "api_url": s.unleashed_api_url,
+        "fulfill_warehouse_code": s.unleashed_fulfill_warehouse_code,
+        "create_order_status": s.unleashed_create_order_status,
+        "use_shipments": s.unleashed_receipt_use_shipments,
+        "fallback_to_order": s.unleashed_receipt_fallback_to_order,
+        "polling_enabled": s.polling_enabled,
+        "polling_interval_minutes": s.polling_interval_minutes,
+        "api_id_set": bool(s.unleashed_api_id),
+        "api_key_set": bool(s.unleashed_api_key),
+    }
+    return render(request, "admin/settings.html", {"v": view, "test_result": test_result})
