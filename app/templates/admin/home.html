@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+<div class="row">
+  <div class="card"><h2>{{ counts.stores }}</h2><div class="muted">Stores</div><a class="btn ghost" href="/admin/stores">Manage →</a></div>
+  <div class="card"><h2>{{ counts.products }}</h2><div class="muted">Products</div><a class="btn ghost" href="/admin/products">Manage →</a></div>
+  <div class="card"><h2>{{ counts.inventory }}</h2><div class="muted">Store inventory rows</div><a class="btn ghost" href="/admin/inventory">Manage →</a></div>
+  <div class="card"><h2>{{ counts.users }}</h2><div class="muted">Users</div><a class="btn ghost" href="/admin/users">Manage →</a></div>
+</div>
+<div class="card">
+  <h2>Setup</h2>
+  <p><a href="/admin/tags">QR / NFC Tags</a> · <a href="/admin/settings">Unleashed API Settings</a></p>
+  <p>Unleashed: {% if unleashed_configured %}<span class="pill ok">configured</span>{% else %}<span class="pill err">not configured</span>{% endif %}</p>
+</div>
+{% endblock %}

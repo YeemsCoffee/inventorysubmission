@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% set hide_nav = True %}
+{% block title %}Done{% endblock %}
+{% block main_class %}scan-wrap{% endblock %}
+{% block content %}
+  <div class="scan-store">{{ store.store_name }}</div>
+  <div class="scan-name">{{ product.display_name }}</div>
+  {% if error %}
+    <div class="scan-confirm scan-error">{{ error }}</div>
+  {% else %}
+    <div class="scan-confirm">
+      Removed {{ quantity | qty }} {{ product.display_name }}.<br>
+      New count: <b>{{ inv.current_count | qty }}</b> {{ product.unit_of_measure }}
+    </div>
+  {% endif %}
+  <a class="btn secondary" style="margin-top:16px; text-align:center" href="/scan/{{ tag_id }}">Remove more</a>
+{% endblock %}

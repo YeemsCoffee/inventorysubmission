@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set hide_nav = True %}
+{% block title %}{{ product.display_name }} — Scan{% endblock %}
+{% block main_class %}scan-wrap{% endblock %}
+{% block content %}
+<div id="scanCard"
+     data-tag="{{ tag_id }}"
+     data-case="{{ product.case_quantity or 1 }}"
+     data-name="{{ product.display_name }}">
+
+  <div class="scan-store">{{ store.store_name }}</div>
+  <div class="scan-name">{{ product.display_name }}</div>
+  <div class="scan-count">In back storage: <b id="curCount">{{ inv.current_count | qty }}</b>
+    <span class="scan-unit">{{ product.unit_of_measure }}</span></div>
+
+  <form id="scanForm" method="post" action="/scan/{{ tag_id }}">
+    <div class="qty-display"><span id="qtyDisplay">1</span></div>
+    <div class="qty-label">Quantity removed for café use</div>
+
+    <div class="qty-grid">
+      <button type="button" class="qty-btn" data-qty="1">1</button>
+      <button type="button" class="qty-btn" data-qty="2">2</button>
+      <button type="button" class="qty-btn" data-qty="3">3</button>
+      <button type="button" class="qty-btn span2" id="caseBtn">Case ({{ product.case_quantity or 1 }})</button>
+      <button type="button" class="qty-btn" id="customBtn">Custom</button>
+    </div>
+
+    <div class="custom-row show" id="customRow">
+      <label for="qtyInput">Custom quantity</label>
+      <input type="number" id="qtyInput" name="quantity" value="1" min="1" step="1" inputmode="numeric">
+    </div>
+
+    <button type="submit" class="submit-btn" id="submitBtn">Submit</button>
+  </form>
+
+  <div id="confirm" class="scan-confirm" style="display:none"></div>
+</div>
+<script src="/static/scan.js"></script>
+{% endblock %}

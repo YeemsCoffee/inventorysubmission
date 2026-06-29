@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Daily Requests{% endblock %}
+{% block content %}
+<h1>Daily Replenishment Requests</h1>
+
+<form method="get" action="/manager/requests" class="card" style="display:flex; gap:12px; align-items:flex-end">
+  <div style="flex:1 1 240px">
+    <label for="store_id">Store</label>
+    <select id="store_id" name="store_id" onchange="this.form.submit()">
+      {% for s in stores %}
+        <option value="{{ s.id }}" {{ 'selected' if s.id == store_id }}>{{ s.store_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+
+<form method="post" action="/manager/requests/generate" class="card">
+  <input type="hidden" name="store_id" value="{{ store_id }}">
+  <p>Generate today's request by comparing each item's current count against its par level.</p>
+  <button class="btn" type="submit">Generate Request</button>
+</form>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Date</th><th>Status</th><th>Unleashed Order</th><th>Submitted</th><th>Received</th><th></th></tr></thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.request_date }}</td>
+        <td>{% include "partials/status_pill.html" %}</td>
+        <td>{{ r.unleashed_order_number or '—' }}</td>
+        <td class="muted">{{ r.submitted_at.strftime('%b %d %H:%M') if r.submitted_at else '—' }}</td>
+        <td class="muted">{{ r.received_at.strftime('%b %d %H:%M') if r.received_at else '—' }}</td>
+        <td><a class="btn small secondary" href="/manager/requests/{{ r.id }}">Open</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">No requests yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

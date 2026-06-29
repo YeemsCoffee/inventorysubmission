@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Sync Status{% endblock %}
+{% block content %}
+<h1>Replenishment Sync Status</h1>
+
+<form method="post" action="/warehouse/poll-now" class="card" style="display:flex; align-items:center; justify-content:space-between">
+  <span class="muted">Manually poll Unleashed for completed orders (the scheduler also does this automatically).</span>
+  <button class="btn secondary" type="submit">Poll now</button>
+</form>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Store</th><th>Date</th><th>Status</th><th>Order #</th>
+          <th>Submitted</th><th>Completed</th><th>Received</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set r = row.req %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ row.store.store_name if row.store else r.store_id }}</td>
+        <td>{{ r.request_date }}</td>
+        <td>{% include "partials/status_pill.html" %}
+            {% if r.error_message %}<div class="muted" title="{{ r.error_message }}">{{ r.error_message[:48] }}…</div>{% endif %}</td>
+        <td>{{ r.unleashed_order_number or '—' }}</td>
+        <td class="muted">{{ r.submitted_at.strftime('%m/%d %H:%M') if r.submitted_at else '—' }}</td>
+        <td class="muted">{{ r.completed_at.strftime('%m/%d %H:%M') if r.completed_at else '—' }}</td>
+        <td class="muted">{{ r.received_at.strftime('%m/%d %H:%M') if r.received_at else '—' }}</td>
+        <td>
+          {% if r.status == 'SYNC_ERROR' %}
+            <form method="post" action="/warehouse/requests/{{ r.id }}/retry-submit" style="display:inline">
+              <button class="btn small" type="submit">Retry submit</button>
+            </form>
+          {% endif %}
+          {% if r.status in ['SUBMITTED','COMPLETED','RECEIPT_ERROR'] %}
+            <form method="post" action="/warehouse/requests/{{ r.id }}/process-receipt" style="display:inline">
+              <button class="btn small secondary" type="submit">Check / receive</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="muted">No requests submitted yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

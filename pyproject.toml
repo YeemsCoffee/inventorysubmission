@@ -1,0 +1,10 @@
+[project]
+name = "cafe-inventory-replenishment"
+version = "0.1.0"
+description = "Café store inventory + replenishment MVP integrating with Unleashed Software"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

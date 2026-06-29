@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Products{% endblock %}
+{% block content %}
+<h1>Products</h1>
+<p class="muted">Product codes must match the Unleashed product codes.</p>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>UoM</th><th class="right">Case</th><th>Active</th></tr></thead>
+    <tbody>
+      {% for p in products %}
+      <tr><td>{{ p.product_code }}</td><td>{{ p.display_name }}</td><td>{{ p.category or '—' }}</td>
+          <td>{{ p.unit_of_measure }}</td><td class="right">{{ p.case_quantity }}</td><td>{{ '✓' if p.active else '—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add / edit product</h2>
+  <form method="post" action="/admin/products">
+    <div class="row">
+      <div><label>ID (blank = new)</label><input type="number" name="id"></div>
+      <div><label>Product code</label><input type="text" name="product_code" required placeholder="OATMILK"></div>
+      <div><label>Display name</label><input type="text" name="display_name" required placeholder="Oat Milk"></div>
+    </div>
+    <div class="row">
+      <div><label>Category</label><input type="text" name="category" placeholder="Dairy Alt"></div>
+      <div><label>Unit of measure</label><input type="text" name="unit_of_measure" value="EA"></div>
+      <div><label>Case quantity</label><input type="number" name="case_quantity" value="1" min="1"></div>
+    </div>
+    <div class="row">
+      <div><label>Unleashed product GUID (optional)</label><input type="text" name="unleashed_product_guid"></div>
+      <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <button class="btn" style="margin-top:14px" type="submit">Save product</button>
+  </form>
+</div>
+{% endblock %}

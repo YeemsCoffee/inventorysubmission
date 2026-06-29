@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>{% block title %}Café Inventory{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  {% if user and not hide_nav %}
+  <nav class="topnav">
+    <a class="brand" href="/">☕ Café Inv</a>
+    <div class="navlinks">
+      {% if user.role in ['STORE_MANAGER','ADMIN'] %}
+        <a href="/manager/inventory">Inventory</a>
+        <a href="/manager/requests">Requests</a>
+      {% endif %}
+      {% if user.role in ['WAREHOUSE','ADMIN'] %}
+        <a href="/warehouse/requests">Sync Status</a>
+      {% endif %}
+      {% if user.role == 'ADMIN' %}
+        <a href="/admin">Admin</a>
+      {% endif %}
+      <a href="/logout">Logout ({{ user.name }})</a>
+    </div>
+  </nav>
+  {% endif %}
+  <main class="{% block main_class %}container{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

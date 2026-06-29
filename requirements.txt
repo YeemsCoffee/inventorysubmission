@@ -1,0 +1,21 @@
+# --- Web framework ---
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9       # form posts (scan submit, admin forms)
+jinja2==3.1.6                 # server-rendered templates
+itsdangerous==2.2.0           # signed session cookies (Starlette SessionMiddleware)
+
+# --- Config / validation ---
+pydantic==2.7.4
+pydantic-settings==2.3.4
+
+# --- Database ---
+SQLAlchemy==2.0.31
+psycopg2-binary==2.9.9        # PostgreSQL driver (production). SQLite needs no driver.
+
+# --- Unleashed integration / scheduling ---
+httpx==0.27.0                 # backend-only HTTP client for the Unleashed API
+APScheduler==3.10.4           # polling fallback job
+
+# --- Tests ---
+pytest==8.2.2

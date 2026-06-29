@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Inventory{% endblock %}
+{% block content %}
+<h1>Store Inventory</h1>
+
+<form method="get" action="/manager/inventory" class="card" style="display:flex; gap:12px; align-items:flex-end">
+  <div style="flex:1 1 240px">
+    <label for="store_id">Store</label>
+    <select id="store_id" name="store_id" onchange="this.form.submit()">
+      {% for s in stores %}
+        <option value="{{ s.id }}" {{ 'selected' if s.id == store_id }}>{{ s.store_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <a class="btn" href="/manager/requests?store_id={{ store_id }}">Daily Requests →</a>
+</form>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>Product</th><th class="right">Count</th><th class="right">Par</th><th class="right">Min</th>
+          <th class="right">Suggested</th><th>Last updated</th><th>Correct</th></tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr class="{{ 'below' if it.below_par }}">
+        <td>
+          <strong>{{ it.product.display_name }}</strong>
+          <div class="muted">{{ it.product.product_code }} · {{ it.product.unit_of_measure }}</div>
+        </td>
+        <td class="right"><b>{{ it.inv.current_count | qty }}</b></td>
+        <td class="right">{{ it.inv.par_level | qty }}</td>
+        <td class="right">{{ it.inv.minimum_level | qty }}</td>
+        <td class="right">
+          {% if it.suggested > 0 %}<span class="pill warn">{{ it.suggested | qty }}</span>{% else %}—{% endif %}
+        </td>
+        <td class="muted">{{ it.inv.last_updated_at.strftime('%b %d %H:%M') }}</td>
+        <td>
+          <form method="post" action="/manager/inventory/adjust" style="display:flex; gap:6px; align-items:center">
+            <input type="hidden" name="inventory_id" value="{{ it.inv.id }}">
+            <input type="hidden" name="store_id" value="{{ store_id }}">
+            <input type="number" name="new_count" value="{{ it.inv.current_count | qty }}" step="1" style="width:80px">
+            <button class="btn small secondary" type="submit">Set</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No inventory configured for this store. Add items in Admin → Store Inventory.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

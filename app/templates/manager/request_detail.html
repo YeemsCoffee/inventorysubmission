@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Request #{{ req.id }}{% endblock %}
+{% block content %}
+<h1>Request #{{ req.id }} — {{ store.store_name }}</h1>
+{% set r = req %}
+<p>
+  {% include "partials/status_pill.html" %}
+  <span class="muted">{{ req.request_date }}</span>
+  {% if req.unleashed_order_number %}· Unleashed order <b>{{ req.unleashed_order_number }}</b>{% endif %}
+</p>
+
+{% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+{% if req.error_message %}<div class="flash error">Last error: {{ req.error_message }}</div>{% endif %}
+
+{% set editable = req.status in ['DRAFT', 'SYNC_ERROR'] %}
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>#</th><th>Product</th><th class="right">Count</th><th class="right">Par</th>
+          <th class="right">Suggested</th><th>Final qty</th><th class="right">Received</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for line, product in lines %}
+      <tr>
+        <td class="muted">{{ line.sales_order_line_number or '—' }}</td>
+        <td><strong>{{ product.display_name }}</strong><div class="muted">{{ product.product_code }}</div></td>
+        <td class="right">{{ line.current_count_at_generation | qty }}</td>
+        <td class="right">{{ line.par_level | qty }}</td>
+        <td class="right">{{ line.suggested_quantity | qty }}</td>
+        <td>
+          {% if editable %}
+          <form method="post" action="/manager/requests/{{ req.id }}/line/{{ line.id }}" style="display:flex; gap:6px">
+            <input type="number" name="final_quantity" value="{{ line.final_requested_quantity | qty }}" step="1" style="width:80px">
+            <input type="text" name="note" placeholder="note" style="width:120px">
+            <button class="btn small secondary" type="submit">Save</button>
+          </form>
+          {% else %}
+            <b>{{ line.final_requested_quantity | qty }}</b>
+          {% endif %}
+        </td>
+        <td class="right">{{ line.received_into_store_count | qty }}</td>
+        <td><span class="pill {{ 'ok' if line.status == 'RECEIVED' else ('info' if line.status == 'SUBMITTED' else 'muted') }}">{{ line.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No lines — every item is at or above par.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  {% if editable and lines %}
+    <form method="post" action="/manager/requests/{{ req.id }}/submit">
+      <p>Submitting creates a Sales Order in Unleashed for the store's customer. It does <b>not</b> change local counts — those only rise when the order is fulfilled.</p>
+      <button class="btn" type="submit">Submit to Unleashed</button>
+    </form>
+  {% elif req.status == 'SUBMITTED' %}
+    <p class="muted">Submitted to Unleashed. Counts will update automatically once the warehouse fulfills and completes the order.</p>
+  {% elif req.status == 'RECEIVED' %}
+    <p class="muted">Fulfilled quantities have been received into local inventory. ✓</p>
+  {% endif %}
+  <a class="btn ghost" href="/manager/requests?store_id={{ req.store_id }}">← Back to requests</a>
+</div>
+{% endblock %}

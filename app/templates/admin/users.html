@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<div class="card">
+  <table>
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Store</th><th>Active</th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr><td>{{ u.name }}</td><td>{{ u.email }}</td><td><span class="pill info">{{ u.role }}</span></td>
+          <td>{{ u.store_id or '—' }}</td><td>{{ '✓' if u.active else '—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Add / edit user</h2>
+  <form method="post" action="/admin/users">
+    <div class="row">
+      <div><label>ID (blank = new)</label><input type="number" name="id"></div>
+      <div><label>Name</label><input type="text" name="name" required></div>
+      <div><label>Email</label><input type="email" name="email" required></div>
+    </div>
+    <div class="row">
+      <div><label>Role</label><select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></div>
+      <div><label>Store (optional)</label>
+        <select name="store_id"><option value="">—</option>{% for s in stores %}<option value="{{ s.id }}">{{ s.store_name }}</option>{% endfor %}</select></div>
+      <div><label>Password (set/reset)</label><input type="password" name="password" autocomplete="new-password"></div>
+      <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <button class="btn" style="margin-top:14px" type="submit">Save user</button>
+  </form>
+  <p class="muted">Employees don't need a password — they only scan tags. Give passwords to managers, warehouse and admin users.</p>
+</div>
+{% endblock %}
