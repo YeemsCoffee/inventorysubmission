@@ -55,7 +55,11 @@ app.include_router(webhooks.router)    # unleashed webhook receiver
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    # Dialect only (never the URL/host/credentials): lets you verify from a
+    # browser that production is on postgresql, not an ephemeral sqlite file.
+    from .database import engine
+
+    return {"status": "ok", "database": engine.dialect.name}
 
 
 @app.get("/")
