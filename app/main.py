@@ -24,6 +24,16 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if settings.seed_on_startup:
+        log = logging.getLogger("app.startup")
+        log.warning("SEED_ON_STARTUP is set — seeding database. Remove this variable after the first boot.")
+        try:
+            from scripts.seed import run as run_seed
+
+            run_seed()
+        except Exception:
+            # A failed seed shouldn't crash-loop the deploy; the logs will show why.
+            log.exception("Startup seed failed — app will continue booting.")
     start_scheduler()
     yield
     shutdown_scheduler()

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     app_env: str = "local"
     secret_key: str = "dev-insecure-secret-change-me"
     base_url: str = "http://localhost:8000"
+    # One-time bootstrap: seed stores/products/users on boot (idempotent).
+    # Set SEED_ON_STARTUP=true for the first deploy, then remove it.
+    seed_on_startup: bool = False
 
     # --- Database ---
     database_url: str = "sqlite:///./cafe_inventory.db"
