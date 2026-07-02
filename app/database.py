@@ -43,6 +43,14 @@ def get_db() -> Iterator[Session]:
 
 def init_db() -> None:
     """Create all tables. MVP uses create_all; production should adopt Alembic."""
+    import logging
+
     from . import models  # noqa: F401  (ensure models are imported/registered)
 
+    # Make the effective database unmistakable in deploy logs (password hidden).
+    # SQLite in production means DATABASE_URL isn't reaching the app and all
+    # data will be lost on every redeploy.
+    logging.getLogger("app.database").info(
+        "Connected database: %s", engine.url.render_as_string(hide_password=True)
+    )
     Base.metadata.create_all(bind=engine)
