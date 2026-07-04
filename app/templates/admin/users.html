@@ -2,34 +2,61 @@
 {% block title %}Users{% endblock %}
 {% block content %}
 <h1>Users</h1>
+
+{% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+{% if err %}<div class="flash error">{{ err }}</div>{% endif %}
+
 <div class="card">
   <table>
-    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Store</th><th>Active</th></tr></thead>
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Store</th><th>Active</th><th>Actions</th></tr></thead>
     <tbody>
       {% for u in users %}
       <tr><td>{{ u.name }}</td><td>{{ u.email }}</td><td><span class="pill info">{{ u.role }}</span></td>
-          <td>{{ u.store_id or '—' }}</td><td>{{ '✓' if u.active else '—' }}</td></tr>
+          <td>{% if u.store_id %}{% for s in stores %}{% if s.id == u.store_id %}{{ s.store_name }}{% endif %}{% endfor %}{% else %}—{% endif %}</td>
+          <td>{{ '✓' if u.active else '—' }}</td>
+          <td>
+            <a href="/admin/users?edit={{ u.id }}">Edit</a>
+            {% if user and user.id != u.id %}
+            <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline; margin-left:8px"
+                  onsubmit="return confirm('Delete {{ u.name }}? If they have activity history the account will be deactivated instead.')">
+              <button type="submit" class="btn" style="background:#dc2626; padding:4px 10px; font-size:13px">Delete</button>
+            </form>
+            {% endif %}
+          </td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
 <div class="card">
-  <h2>Add / edit user</h2>
+  {% if editing %}
+  <h2>Edit user: {{ editing.name }} <a href="/admin/users" class="muted" style="font-size:14px; font-weight:normal; margin-left:8px">cancel</a></h2>
+  {% else %}
+  <h2>Add user</h2>
+  {% endif %}
   <form method="post" action="/admin/users">
+    <input type="hidden" name="id" value="{{ editing.id if editing else '' }}">
     <div class="row">
-      <div><label>ID (blank = new)</label><input type="number" name="id"></div>
-      <div><label>Name</label><input type="text" name="name" required></div>
-      <div><label>Email</label><input type="email" name="email" required></div>
+      <div><label>Name</label><input type="text" name="name" required value="{{ editing.name if editing else '' }}"></div>
+      <div><label>Email</label><input type="email" name="email" required value="{{ editing.email if editing else '' }}"></div>
     </div>
     <div class="row">
-      <div><label>Role</label><select name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></div>
+      <div><label>Role</label>
+        <select name="role">
+          {% for r in roles %}<option value="{{ r }}" {% if editing and editing.role == r %}selected{% endif %}>{{ r }}</option>{% endfor %}
+        </select></div>
       <div><label>Store (optional)</label>
-        <select name="store_id"><option value="">—</option>{% for s in stores %}<option value="{{ s.id }}">{{ s.store_name }}</option>{% endfor %}</select></div>
-      <div><label>Password (set/reset)</label><input type="password" name="password" autocomplete="new-password"></div>
-      <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+        <select name="store_id"><option value="">—</option>
+          {% for s in stores %}<option value="{{ s.id }}" {% if editing and editing.store_id == s.id %}selected{% endif %}>{{ s.store_name }}</option>{% endfor %}
+        </select></div>
+      <div><label>Password {{ '(leave blank to keep current)' if editing else '(set/reset)' }}</label><input type="password" name="password" autocomplete="new-password"></div>
+      <div><label>Active</label>
+        <select name="active">
+          <option value="true" {% if not editing or editing.active %}selected{% endif %}>Yes</option>
+          <option value="false" {% if editing and not editing.active %}selected{% endif %}>No</option>
+        </select></div>
     </div>
-    <button class="btn" style="margin-top:14px" type="submit">Save user</button>
+    <button class="btn" style="margin-top:14px" type="submit">{{ 'Save changes' if editing else 'Add user' }}</button>
   </form>
   <p class="muted">Employees don't need a password — they only scan tags. Give passwords to managers, warehouse and admin users.</p>
 </div>

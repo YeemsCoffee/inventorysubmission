@@ -1,22 +1,33 @@
 """Admin setup: stores, products, store inventory/par/tags, users, Unleashed settings."""
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..database import get_db
 from ..enums import Role
 from ..integrations.unleashed import UnleashedClient, UnleashedError
-from ..models import Product, Store, StoreInventory, User
+from ..models import DailyRequest, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import hash_password, require_roles
 from ..templating import render
 
 router = APIRouter(prefix="/admin")
 
 AdminUser = Depends(require_roles(Role.ADMIN))
+
+
+def _redirect(path: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
+    """303 redirect carrying a one-shot flash message as a query param."""
+    for key, text in (("msg", msg), ("err", err)):
+        if text:
+            path += ("&" if "?" in path else "?") + f"{key}={quote(text)}"
+    return RedirectResponse(url=path, status_code=303)
 
 
 @router.get("")
@@ -33,9 +44,17 @@ def admin_home(request: Request, db: Session = Depends(get_db), user: User = Adm
 
 # ---- Stores ----------------------------------------------------------
 @router.get("/stores")
-def stores_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+def stores_page(
+    request: Request,
+    edit: int | None = None,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
-    return render(request, "admin/stores.html", {"stores": stores})
+    editing = db.get(Store, edit) if edit else None
+    return render(request, "admin/stores.html", {"stores": stores, "editing": editing, "msg": msg, "err": err})
 
 
 @router.post("/stores")
@@ -58,8 +77,38 @@ def stores_save(
     store.active = active
     if not id:
         db.add(store)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _redirect("/admin/stores", err=f"Store code '{store_code.strip()}' is already in use.")
+    return _redirect("/admin/stores", msg=f"Store {store.store_name} saved.")
+
+
+@router.post("/stores/{store_id}/delete")
+def stores_delete(store_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+    store = db.get(Store, store_id)
+    if store is None:
+        return _redirect("/admin/stores", err="Store not found.")
+    name = store.store_name
+    # History (inventory, ledger, requests) must never be orphaned: a store with
+    # any of it is deactivated instead of deleted.
+    has_history = (
+        db.query(StoreInventory.id).filter(StoreInventory.store_id == store_id).first() is not None
+        or db.query(InventoryTransaction.id).filter(InventoryTransaction.store_id == store_id).first() is not None
+        or db.query(DailyRequest.id).filter(DailyRequest.store_id == store_id).first() is not None
+    )
+    if has_history:
+        store.active = False
+        db.commit()
+        return _redirect(
+            "/admin/stores",
+            msg=f"{name} has inventory/request history, so it was deactivated instead of deleted.",
+        )
+    db.query(User).filter(User.store_id == store_id).update({"store_id": None})
+    db.delete(store)
     db.commit()
-    return RedirectResponse(url="/admin/stores", status_code=303)
+    return _redirect("/admin/stores", msg=f"Store {name} deleted.")
 
 
 # ---- Products --------------------------------------------------------
@@ -165,10 +214,22 @@ def tags_page(request: Request, db: Session = Depends(get_db), user: User = Admi
 
 # ---- Users -----------------------------------------------------------
 @router.get("/users")
-def users_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+def users_page(
+    request: Request,
+    edit: int | None = None,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     users = list(db.execute(select(User).order_by(User.name)).scalars())
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
-    return render(request, "admin/users.html", {"users": users, "stores": stores, "roles": sorted(Role.ALL)})
+    editing = db.get(User, edit) if edit else None
+    return render(
+        request,
+        "admin/users.html",
+        {"users": users, "stores": stores, "roles": sorted(Role.ALL), "editing": editing, "msg": msg, "err": err},
+    )
 
 
 @router.post("/users")
@@ -185,6 +246,15 @@ def users_save(
     user: User = AdminUser,
 ):
     target = db.get(User, id) if id else User(email=email.strip().lower())
+    # Guard against locking yourself out by demoting/deactivating the last admin.
+    if id and target is not None and target.role == Role.ADMIN and (role != Role.ADMIN or not active):
+        other_admins = (
+            db.query(User.id)
+            .filter(User.role == Role.ADMIN, User.active.is_(True), User.id != target.id)
+            .first()
+        )
+        if other_admins is None:
+            return _redirect("/admin/users", err="Cannot demote or deactivate the last active admin.")
     target.name = name.strip()
     target.email = email.strip().lower()
     target.role = role if role in Role.ALL else Role.EMPLOYEE
@@ -194,8 +264,46 @@ def users_save(
         target.password_hash = hash_password(password)
     if not id:
         db.add(target)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _redirect("/admin/users", err=f"Email '{email.strip().lower()}' is already in use.")
+    return _redirect("/admin/users", msg=f"User {target.name} saved.")
+
+
+@router.post("/users/{user_id}/delete")
+def users_delete(user_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+    target = db.get(User, user_id)
+    if target is None:
+        return _redirect("/admin/users", err="User not found.")
+    if target.id == user.id:
+        return _redirect("/admin/users", err="You can't delete your own account.")
+    if target.role == Role.ADMIN and target.active:
+        other_admins = (
+            db.query(User.id)
+            .filter(User.role == Role.ADMIN, User.active.is_(True), User.id != target.id)
+            .first()
+        )
+        if other_admins is None:
+            return _redirect("/admin/users", err="Cannot delete the last active admin.")
+    name = target.name
+    # Users referenced by the ledger or by submitted requests are deactivated
+    # (login disabled) so the audit history keeps its author.
+    has_history = (
+        db.query(InventoryTransaction.id).filter(InventoryTransaction.employee_id == user_id).first() is not None
+        or db.query(DailyRequest.id).filter(DailyRequest.submitted_by == user_id).first() is not None
+    )
+    if has_history:
+        target.active = False
+        db.commit()
+        return _redirect(
+            "/admin/users",
+            msg=f"{name} has activity history, so the account was deactivated (login disabled) instead of deleted.",
+        )
+    db.delete(target)
     db.commit()
-    return RedirectResponse(url="/admin/users", status_code=303)
+    return _redirect("/admin/users", msg=f"User {name} deleted.")
 
 
 # ---- Unleashed settings ---------------------------------------------
