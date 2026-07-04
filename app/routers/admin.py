@@ -141,10 +141,44 @@ def stores_delete(
 
 
 # ---- Products --------------------------------------------------------
+def _ensure_inventory_rows(
+    db: Session, product: Product, stores: list[Store], *, par: float = 0.0, minimum: float = 0.0
+) -> int:
+    """Create missing StoreInventory rows for a product (tag auto-named
+    {STORE_CODE}-{PRODUCT_CODE}; left blank if that tag is already taken)."""
+    created = 0
+    for store in stores:
+        exists = (
+            db.query(StoreInventory.id)
+            .filter(StoreInventory.store_id == store.id, StoreInventory.product_id == product.id)
+            .first()
+        )
+        if exists:
+            continue
+        tag = f"{store.store_code}-{product.product_code}"
+        tag_taken = db.query(StoreInventory.id).filter(StoreInventory.tag_id == tag).first()
+        db.add(
+            StoreInventory(
+                store_id=store.id, product_id=product.id, current_count=0,
+                par_level=par, minimum_level=minimum,
+                tag_id=None if tag_taken else tag,
+                storage_location="Back Storage", active=True,
+            )
+        )
+        created += 1
+    return created
+
+
 @router.get("/products")
-def products_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+def products_page(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     products = list(db.execute(select(Product).order_by(Product.display_name)).scalars())
-    return render(request, "admin/products.html", {"products": products})
+    return render(request, "admin/products.html", {"products": products, "msg": msg, "err": err})
 
 
 @router.post("/products")
@@ -158,6 +192,9 @@ def products_save(
     case_quantity: int = Form(1),
     unleashed_product_guid: str = Form(""),
     active: bool = Form(False),
+    assign_all_stores: bool = Form(False),
+    default_par: float = Form(0),
+    default_min: float = Form(0),
     db: Session = Depends(get_db),
     user: User = AdminUser,
 ):
@@ -171,13 +208,32 @@ def products_save(
     product.active = active
     if not id:
         db.add(product)
-    db.commit()
-    return RedirectResponse(url="/admin/products", status_code=303)
+    created = 0
+    if assign_all_stores:
+        db.flush()  # ensure product.id for new products
+        stores = list(db.execute(select(Store).where(Store.active.is_(True))).scalars())
+        created = _ensure_inventory_rows(db, product, stores, par=default_par, minimum=default_min)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _redirect("/admin/products", err=f"Product code '{product_code.strip()}' is already in use.")
+    msg = f"Product {product.display_name} saved."
+    if created:
+        msg += f" Added to {created} store(s) — set par levels under Store Inventory."
+    return _redirect("/admin/products", msg=msg)
 
 
 # ---- Store inventory / par / tags ------------------------------------
 @router.get("/inventory")
-def inventory_page(request: Request, store_id: int | None = None, db: Session = Depends(get_db), user: User = AdminUser):
+def inventory_page(
+    request: Request,
+    store_id: int | None = None,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
     sid = store_id or (stores[0].id if stores else None)
     rows = []
@@ -192,8 +248,32 @@ def inventory_page(request: Request, store_id: int | None = None, db: Session = 
     return render(
         request,
         "admin/inventory.html",
-        {"stores": stores, "store_id": sid, "rows": rows, "products": products, "base_url": get_settings().base_url},
+        {"stores": stores, "store_id": sid, "rows": rows, "products": products,
+         "base_url": get_settings().base_url, "msg": msg, "err": err},
     )
+
+
+@router.post("/inventory/backfill")
+def inventory_backfill(
+    store_id: int = Form(...),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    """Create rows (count 0, par 0) for every active product this store lacks."""
+    store = db.get(Store, store_id)
+    if store is None:
+        return _redirect("/admin/inventory", err="Store not found.")
+    products = list(db.execute(select(Product).where(Product.active.is_(True))).scalars())
+    created = 0
+    for product in products:
+        created += _ensure_inventory_rows(db, product, [store])
+    db.commit()
+    if created:
+        return _redirect(
+            f"/admin/inventory?store_id={store_id}",
+            msg=f"Added {created} missing product(s) to {store.store_name} — now set their par levels.",
+        )
+    return _redirect(f"/admin/inventory?store_id={store_id}", msg=f"{store.store_name} already has every active product.")
 
 
 @router.post("/inventory")
@@ -225,8 +305,15 @@ def inventory_save(
     inv.active = active
     if not id:
         db.add(inv)
-    db.commit()
-    return RedirectResponse(url=f"/admin/inventory?store_id={store_id}", status_code=303)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _redirect(
+            f"/admin/inventory?store_id={store_id}",
+            err="Could not save: this store already has that product, or the tag ID is used elsewhere.",
+        )
+    return _redirect(f"/admin/inventory?store_id={store_id}", msg="Item saved.")
 
 
 @router.get("/tags")

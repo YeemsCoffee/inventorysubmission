@@ -124,6 +124,49 @@ def test_cannot_deactivate_last_admin_via_save(client, db, admin):
     assert db.get(User, admin.id).active is True
 
 
+def test_new_product_assigned_to_all_stores(client, db, store):
+    from app.models import Product, StoreInventory
+
+    other = Store(store_code="GARDENA", store_name="Gardena", unleashed_customer_code="GARDENA", active=True)
+    db.add(other)
+    db.commit()
+
+    r = client.post(
+        "/admin/products",
+        data={
+            "product_code": "HAZSYR", "display_name": "Hazelnut Syrup", "unit_of_measure": "BTL",
+            "case_quantity": "6", "active": "true",
+            "assign_all_stores": "true", "default_par": "8", "default_min": "2",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and "msg=" in r.headers["location"]
+    db.expunge_all()
+    product = db.query(Product).filter_by(product_code="HAZSYR").one()
+    rows = db.query(StoreInventory).filter_by(product_id=product.id).all()
+    assert len(rows) == 2
+    assert {row.tag_id for row in rows} == {"KTOWN-HAZSYR", "GARDENA-HAZSYR"}
+    assert all(row.par_level == 8 and row.minimum_level == 2 and row.current_count == 0 for row in rows)
+
+
+def test_backfill_adds_only_missing_products(client, db, inventory, store):
+    from app.models import Product, StoreInventory
+
+    extra = Product(product_code="EXTRA", display_name="Extra", unit_of_measure="EA", case_quantity=1, active=True)
+    db.add(extra)
+    db.commit()
+
+    r = client.post("/admin/inventory/backfill", data={"store_id": store.id}, follow_redirects=False)
+    assert "Added+1" in r.headers["location"] or "Added%201" in r.headers["location"]
+    db.expunge_all()
+    assert db.query(StoreInventory).filter_by(store_id=store.id).count() == 2
+
+    # Idempotent: running again adds nothing.
+    client.post("/admin/inventory/backfill", data={"store_id": store.id}, follow_redirects=False)
+    db.expunge_all()
+    assert db.query(StoreInventory).filter_by(store_id=store.id).count() == 2
+
+
 def test_duplicate_email_reports_error_instead_of_500(client, db, admin):
     r = client.post(
         "/admin/users",
