@@ -172,13 +172,33 @@ def _ensure_inventory_rows(
 @router.get("/products")
 def products_page(
     request: Request,
+    edit: int | None = None,
+    confirm_delete: int | None = None,
     msg: str | None = None,
     err: str | None = None,
     db: Session = Depends(get_db),
     user: User = AdminUser,
 ):
     products = list(db.execute(select(Product).order_by(Product.display_name)).scalars())
-    return render(request, "admin/products.html", {"products": products, "msg": msg, "err": err})
+    editing = db.get(Product, edit) if edit else None
+    confirming = db.get(Product, confirm_delete) if confirm_delete else None
+    counts = None
+    if confirming is not None:
+        counts = {
+            "inventory": db.query(StoreInventory.id).filter(StoreInventory.product_id == confirming.id).count(),
+            "transactions": db.query(InventoryTransaction.id)
+            .filter(InventoryTransaction.product_id == confirming.id)
+            .count(),
+            "request_lines": db.query(DailyRequestLine.id)
+            .filter(DailyRequestLine.product_id == confirming.id)
+            .count(),
+        }
+    return render(
+        request,
+        "admin/products.html",
+        {"products": products, "editing": editing, "confirming": confirming, "confirm_counts": counts,
+         "msg": msg, "err": err},
+    )
 
 
 @router.post("/products")
@@ -224,18 +244,54 @@ def products_save(
     return _redirect("/admin/products", msg=msg)
 
 
+@router.post("/products/{product_id}/delete")
+def products_delete(
+    product_id: int,
+    force: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    product = db.get(Product, product_id)
+    if product is None:
+        return _redirect("/admin/products", err="Product not found.")
+    name = product.display_name
+    has_history = (
+        db.query(StoreInventory.id).filter(StoreInventory.product_id == product_id).first() is not None
+        or db.query(InventoryTransaction.id).filter(InventoryTransaction.product_id == product_id).first() is not None
+        or db.query(DailyRequestLine.id).filter(DailyRequestLine.product_id == product_id).first() is not None
+    )
+    if has_history and not force:
+        return _redirect(f"/admin/products?confirm_delete={product_id}")
+    if has_history:
+        # Purge in FK order: ledger -> request lines -> store rows -> product.
+        db.query(InventoryTransaction).filter(InventoryTransaction.product_id == product_id).delete(
+            synchronize_session=False
+        )
+        db.query(DailyRequestLine).filter(DailyRequestLine.product_id == product_id).delete(
+            synchronize_session=False
+        )
+        db.query(StoreInventory).filter(StoreInventory.product_id == product_id).delete(synchronize_session=False)
+    db.delete(product)
+    db.commit()
+    if has_history:
+        return _redirect("/admin/products", msg=f"Product {name} and all its history permanently deleted.")
+    return _redirect("/admin/products", msg=f"Product {name} deleted.")
+
+
 # ---- Store inventory / par / tags ------------------------------------
 @router.get("/inventory")
 def inventory_page(
     request: Request,
     store_id: int | None = None,
+    edit: int | None = None,
     msg: str | None = None,
     err: str | None = None,
     db: Session = Depends(get_db),
     user: User = AdminUser,
 ):
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
-    sid = store_id or (stores[0].id if stores else None)
+    editing = db.get(StoreInventory, edit) if edit else None
+    sid = store_id or (editing.store_id if editing else None) or (stores[0].id if stores else None)
     rows = []
     if sid:
         rows = db.execute(
@@ -248,8 +304,24 @@ def inventory_page(
     return render(
         request,
         "admin/inventory.html",
-        {"stores": stores, "store_id": sid, "rows": rows, "products": products,
+        {"stores": stores, "store_id": sid, "rows": rows, "products": products, "editing": editing,
          "base_url": get_settings().base_url, "msg": msg, "err": err},
+    )
+
+
+@router.post("/inventory/{item_id}/delete")
+def inventory_delete(item_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+    inv = db.get(StoreInventory, item_id)
+    if inv is None:
+        return _redirect("/admin/inventory", err="Item not found.")
+    sid = inv.store_id
+    product = db.get(Product, inv.product_id)
+    # Ledger history is keyed by store+product (not this row), so it survives.
+    db.delete(inv)
+    db.commit()
+    return _redirect(
+        f"/admin/inventory?store_id={sid}",
+        msg=f"Removed {product.display_name if product else 'item'} from this store (scan history kept).",
     )
 
 
