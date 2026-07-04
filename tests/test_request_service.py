@@ -1,9 +1,19 @@
 """Daily request generation + idempotent submission to Unleashed."""
 from __future__ import annotations
 
+import pytest
+
 from app.enums import RequestStatus
+from app.integrations.unleashed import UnleashedError
 from app.services import request_service
 from tests.conftest import FakeUnleashedClient
+
+
+class FailingUnleashedClient(FakeUnleashedClient):
+    """Simulates Unleashed rejecting the order (e.g. unknown customer code)."""
+
+    def create_sales_order(self, guid, payload):
+        raise UnleashedError("Unleashed POST /SalesOrders -> 400: invalid customer")
 
 
 def test_generate_uses_par_minus_count(db, inventory):
@@ -44,6 +54,22 @@ def test_submit_sets_guid_order_number_and_status(db, inventory):
     assert payload["Customer"]["CustomerCode"] == "KTOWN"
     assert payload["Warehouse"]["WarehouseCode"]
     assert payload["SalesOrderLines"][0]["OrderQuantity"] == 6
+
+
+def test_regenerate_after_failed_submit_does_not_violate_ledger_fk(db, inventory):
+    """Regression: a failed submit writes SYNC_ERROR ledger rows that reference
+    the request lines. Regenerating must not crash deleting those lines
+    (IntegrityError on Postgres / FK-enforcing SQLite)."""
+    req = request_service.generate_daily_request(db, store_id=inventory.store_id)
+    with pytest.raises(UnleashedError):
+        request_service.submit_to_unleashed(db, request_id=req.id, client=FailingUnleashedClient())
+    assert req.status == RequestStatus.SYNC_ERROR
+
+    # Manager fixes the config and hits "Generate request" again -> refresh, not 500.
+    req2 = request_service.generate_daily_request(db, store_id=inventory.store_id)
+    assert req2.id == req.id
+    assert req2.status == RequestStatus.DRAFT
+    assert len(req2.lines) == 1
 
 
 def test_submit_retry_reuses_same_guid(db, inventory):
