@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
@@ -24,6 +24,15 @@ engine = create_engine(
     pool_pre_ping=not settings.is_sqlite,
     future=True,
 )
+
+if settings.is_sqlite:
+    # SQLite ships with foreign keys OFF per connection. Enforce them so local
+    # dev/tests surface the same integrity errors Postgres raises in production.
+    @event.listens_for(engine, "connect")
+    def _sqlite_enforce_foreign_keys(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 

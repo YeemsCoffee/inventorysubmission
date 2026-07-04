@@ -15,13 +15,20 @@ import logging
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..enums import LineStatus, RequestStatus, TransactionType
 from ..integrations.unleashed import UnleashedClient, UnleashedError
-from ..models import DailyRequest, DailyRequestLine, Product, Store, StoreInventory
+from ..models import (
+    DailyRequest,
+    DailyRequestLine,
+    InventoryTransaction,
+    Product,
+    Store,
+    StoreInventory,
+)
 from . import inventory_service
 
 logger = logging.getLogger("request_service")
@@ -55,6 +62,16 @@ def generate_daily_request(
 
     if existing is not None:
         req = existing
+        # Ledger rows (e.g. SYNC_ERROR audits from a failed submit) may reference
+        # the old lines. Detach them before deleting or the FK blocks the delete;
+        # they stay linked to the request itself via daily_request_id.
+        old_line_ids = [ln.id for ln in req.lines]
+        if old_line_ids:
+            db.execute(
+                update(InventoryTransaction)
+                .where(InventoryTransaction.daily_request_line_id.in_(old_line_ids))
+                .values(daily_request_line_id=None)
+            )
         for ln in list(req.lines):
             db.delete(ln)
         req.status = RequestStatus.DRAFT
