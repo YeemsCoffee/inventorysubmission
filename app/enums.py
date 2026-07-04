@@ -16,6 +16,7 @@ class TransactionType:
     DAILY_REQUEST_GENERATED = "DAILY_REQUEST_GENERATED"
     UNLEASHED_REQUEST_SUBMITTED = "UNLEASHED_REQUEST_SUBMITTED"
     REQUEST_OVERRIDE = "REQUEST_OVERRIDE"
+    REQUEST_CANCELLED = "REQUEST_CANCELLED"
     SYNC_ERROR = "SYNC_ERROR"
 
     INVENTORY_AFFECTING = {STORE_REMOVAL, UNLEASHED_RECEIPT, COUNT_ADJUSTMENT}
@@ -30,8 +31,10 @@ class RequestStatus:
     COMPLETED = "COMPLETED"         # Unleashed order detected Completed (receipt pending)
     RECEIVED = "RECEIVED"           # fulfilled quantities applied to local inventory
     RECEIPT_ERROR = "RECEIPT_ERROR" # completion detected but receipt processing failed (retryable)
+    CANCELLED = "CANCELLED"         # retired locally; any Unleashed order must be removed there too
 
     OPEN_FOR_RECEIPT = {SUBMITTED, COMPLETED, RECEIPT_ERROR}
+    CANCELLABLE = {DRAFT, SUBMITTED, SYNC_ERROR, COMPLETED, RECEIPT_ERROR}
 
 
 class LineStatus:

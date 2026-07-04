@@ -4,6 +4,7 @@
   'COMPLETED': 'info',
   'RECEIVED': 'ok',
   'SYNC_ERROR': 'err',
-  'RECEIPT_ERROR': 'err'
+  'RECEIPT_ERROR': 'err',
+  'CANCELLED': 'muted'
 }.get(r.status, 'muted') %}
 <span class="pill {{ cls }}">{{ r.status }}</span>
