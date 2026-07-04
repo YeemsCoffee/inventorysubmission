@@ -13,7 +13,7 @@ from ..config import get_settings
 from ..database import get_db
 from ..enums import Role
 from ..integrations.unleashed import UnleashedClient, UnleashedError
-from ..models import DailyRequest, InventoryTransaction, Product, Store, StoreInventory, User
+from ..models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import hash_password, require_roles
 from ..templating import render
 
@@ -47,6 +47,7 @@ def admin_home(request: Request, db: Session = Depends(get_db), user: User = Adm
 def stores_page(
     request: Request,
     edit: int | None = None,
+    confirm_delete: int | None = None,
     msg: str | None = None,
     err: str | None = None,
     db: Session = Depends(get_db),
@@ -54,7 +55,22 @@ def stores_page(
 ):
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
     editing = db.get(Store, edit) if edit else None
-    return render(request, "admin/stores.html", {"stores": stores, "editing": editing, "msg": msg, "err": err})
+    confirming = db.get(Store, confirm_delete) if confirm_delete else None
+    counts = None
+    if confirming is not None:
+        counts = {
+            "inventory": db.query(StoreInventory.id).filter(StoreInventory.store_id == confirming.id).count(),
+            "requests": db.query(DailyRequest.id).filter(DailyRequest.store_id == confirming.id).count(),
+            "transactions": db.query(InventoryTransaction.id)
+            .filter(InventoryTransaction.store_id == confirming.id)
+            .count(),
+        }
+    return render(
+        request,
+        "admin/stores.html",
+        {"stores": stores, "editing": editing, "confirming": confirming, "confirm_counts": counts,
+         "msg": msg, "err": err},
+    )
 
 
 @router.post("/stores")
@@ -86,28 +102,41 @@ def stores_save(
 
 
 @router.post("/stores/{store_id}/delete")
-def stores_delete(store_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+def stores_delete(
+    store_id: int,
+    force: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     store = db.get(Store, store_id)
     if store is None:
         return _redirect("/admin/stores", err="Store not found.")
     name = store.store_name
-    # History (inventory, ledger, requests) must never be orphaned: a store with
-    # any of it is deactivated instead of deleted.
     has_history = (
         db.query(StoreInventory.id).filter(StoreInventory.store_id == store_id).first() is not None
         or db.query(InventoryTransaction.id).filter(InventoryTransaction.store_id == store_id).first() is not None
         or db.query(DailyRequest.id).filter(DailyRequest.store_id == store_id).first() is not None
     )
+    if has_history and not force:
+        # Deleting history is irreversible — show an explicit confirmation first.
+        return _redirect(f"/admin/stores?confirm_delete={store_id}")
     if has_history:
-        store.active = False
-        db.commit()
-        return _redirect(
-            "/admin/stores",
-            msg=f"{name} has inventory/request history, so it was deactivated instead of deleted.",
+        # Purge in FK order: ledger -> request lines -> requests -> inventory.
+        request_ids = [rid for (rid,) in db.query(DailyRequest.id).filter(DailyRequest.store_id == store_id)]
+        db.query(InventoryTransaction).filter(InventoryTransaction.store_id == store_id).delete(
+            synchronize_session=False
         )
+        if request_ids:
+            db.query(DailyRequestLine).filter(DailyRequestLine.daily_request_id.in_(request_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(DailyRequest).filter(DailyRequest.id.in_(request_ids)).delete(synchronize_session=False)
+        db.query(StoreInventory).filter(StoreInventory.store_id == store_id).delete(synchronize_session=False)
     db.query(User).filter(User.store_id == store_id).update({"store_id": None})
     db.delete(store)
     db.commit()
+    if has_history:
+        return _redirect("/admin/stores", msg=f"Store {name} and all its history permanently deleted.")
     return _redirect("/admin/stores", msg=f"Store {name} deleted.")
 
 
@@ -217,6 +246,7 @@ def tags_page(request: Request, db: Session = Depends(get_db), user: User = Admi
 def users_page(
     request: Request,
     edit: int | None = None,
+    confirm_delete: int | None = None,
     msg: str | None = None,
     err: str | None = None,
     db: Session = Depends(get_db),
@@ -225,10 +255,12 @@ def users_page(
     users = list(db.execute(select(User).order_by(User.name)).scalars())
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
     editing = db.get(User, edit) if edit else None
+    confirming = db.get(User, confirm_delete) if confirm_delete else None
     return render(
         request,
         "admin/users.html",
-        {"users": users, "stores": stores, "roles": sorted(Role.ALL), "editing": editing, "msg": msg, "err": err},
+        {"users": users, "stores": stores, "roles": sorted(Role.ALL), "editing": editing,
+         "confirming": confirming, "msg": msg, "err": err},
     )
 
 
@@ -273,7 +305,12 @@ def users_save(
 
 
 @router.post("/users/{user_id}/delete")
-def users_delete(user_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+def users_delete(
+    user_id: int,
+    force: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     target = db.get(User, user_id)
     if target is None:
         return _redirect("/admin/users", err="User not found.")
@@ -288,18 +325,19 @@ def users_delete(user_id: int, db: Session = Depends(get_db), user: User = Admin
         if other_admins is None:
             return _redirect("/admin/users", err="Cannot delete the last active admin.")
     name = target.name
-    # Users referenced by the ledger or by submitted requests are deactivated
-    # (login disabled) so the audit history keeps its author.
     has_history = (
         db.query(InventoryTransaction.id).filter(InventoryTransaction.employee_id == user_id).first() is not None
         or db.query(DailyRequest.id).filter(DailyRequest.submitted_by == user_id).first() is not None
     )
+    if has_history and not force:
+        return _redirect(f"/admin/users?confirm_delete={user_id}")
     if has_history:
-        target.active = False
-        db.commit()
-        return _redirect(
-            "/admin/users",
-            msg=f"{name} has activity history, so the account was deactivated (login disabled) instead of deleted.",
+        # Keep the store's history; just remove this person's name from it.
+        db.query(InventoryTransaction).filter(InventoryTransaction.employee_id == user_id).update(
+            {"employee_id": None}, synchronize_session=False
+        )
+        db.query(DailyRequest).filter(DailyRequest.submitted_by == user_id).update(
+            {"submitted_by": None}, synchronize_session=False
         )
     db.delete(target)
     db.commit()

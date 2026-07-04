@@ -6,6 +6,19 @@
 {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
 {% if err %}<div class="flash error">{{ err }}</div>{% endif %}
 
+{% if confirming %}
+<div class="card" style="border:2px solid #dc2626">
+  <h2 style="color:#dc2626">Delete {{ confirming.name }}?</h2>
+  <p>{{ confirming.name }} appears in the activity history (scans, requests). Deleting the account
+     <b>keeps all of that history</b> but removes their name from it, and this can't be undone.</p>
+  <form method="post" action="/admin/users/{{ confirming.id }}/delete" style="display:inline">
+    <input type="hidden" name="force" value="true">
+    <button type="submit" class="btn" style="background:#dc2626">Yes, delete {{ confirming.name }}</button>
+  </form>
+  <a href="/admin/users" class="btn" style="margin-left:8px; background:#6b7280">Cancel</a>
+</div>
+{% endif %}
+
 <div class="card">
   <table>
     <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Store</th><th>Active</th><th>Actions</th></tr></thead>
@@ -18,7 +31,7 @@
             <a href="/admin/users?edit={{ u.id }}">Edit</a>
             {% if user and user.id != u.id %}
             <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline; margin-left:8px"
-                  onsubmit="return confirm('Delete {{ u.name }}? If they have activity history the account will be deactivated instead.')">
+                  onsubmit="return confirm('Delete {{ u.name }}? If they appear in activity history you will be asked to confirm first.')">
               <button type="submit" class="btn" style="background:#dc2626; padding:4px 10px; font-size:13px">Delete</button>
             </form>
             {% endif %}
