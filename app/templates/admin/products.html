@@ -7,44 +7,75 @@
 {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
 {% if err %}<div class="flash error">{{ err }}</div>{% endif %}
 
+{% if confirming %}
+<div class="card" style="border:2px solid #dc2626">
+  <h2 style="color:#dc2626">Permanently delete {{ confirming.display_name }}?</h2>
+  <p>This product has history that will be <b>erased forever</b>:</p>
+  <ul>
+    <li><b>{{ confirm_counts.inventory }}</b> store item row(s) and their tags</li>
+    <li><b>{{ confirm_counts.transactions }}</b> ledger entrie(s) (scans, receipts, adjustments)</li>
+    <li><b>{{ confirm_counts.request_lines }}</b> request line(s) — open requests will lose this item</li>
+  </ul>
+  <p class="muted">To stop ordering it but keep the history, cancel and set the product to Active: No instead.</p>
+  <form method="post" action="/admin/products/{{ confirming.id }}/delete" style="display:inline">
+    <input type="hidden" name="force" value="true">
+    <button type="submit" class="btn" style="background:#dc2626">Yes, permanently delete {{ confirming.display_name }}</button>
+  </form>
+  <a href="/admin/products" class="btn" style="margin-left:8px; background:#6b7280">Cancel</a>
+</div>
+{% endif %}
+
 <div class="card">
   <table>
-    <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>UoM</th><th class="right">Case</th><th>Active</th></tr></thead>
+    <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>UoM</th><th class="right">Case</th><th>Active</th><th>Actions</th></tr></thead>
     <tbody>
       {% for p in products %}
       <tr><td>{{ p.product_code }}</td><td>{{ p.display_name }}</td><td>{{ p.category or '—' }}</td>
-          <td>{{ p.unit_of_measure }}</td><td class="right">{{ p.case_quantity }}</td><td>{{ '✓' if p.active else '—' }}</td></tr>
+          <td>{{ p.unit_of_measure }}</td><td class="right">{{ p.case_quantity }}</td><td>{{ '✓' if p.active else '—' }}</td>
+          <td>
+            <a href="/admin/products?edit={{ p.id }}">Edit</a>
+            <form method="post" action="/admin/products/{{ p.id }}/delete" style="display:inline; margin-left:8px"
+                  onsubmit="return confirm('Delete {{ p.display_name }}? If it has history you will be asked to confirm before anything is erased.')">
+              <button type="submit" class="btn" style="background:#dc2626; padding:4px 10px; font-size:13px">Delete</button>
+            </form>
+          </td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
 
 <div class="card">
-  <h2>Add / edit product</h2>
+  {% if editing %}
+  <h2>Edit product: {{ editing.display_name }} <a href="/admin/products" class="muted" style="font-size:14px; font-weight:normal; margin-left:8px">cancel</a></h2>
+  {% else %}
+  <h2>Add product</h2>
+  {% endif %}
   <form method="post" action="/admin/products">
+    <input type="hidden" name="id" value="{{ editing.id if editing else '' }}">
     <div class="row">
-      <div><label>ID (blank = new)</label><input type="number" name="id"></div>
-      <div><label>Product code</label><input type="text" name="product_code" required placeholder="OATMILK"></div>
-      <div><label>Display name</label><input type="text" name="display_name" required placeholder="Oat Milk"></div>
+      <div><label>Product code</label><input type="text" name="product_code" required placeholder="OATMILK" value="{{ editing.product_code if editing else '' }}"></div>
+      <div><label>Display name</label><input type="text" name="display_name" required placeholder="Oat Milk" value="{{ editing.display_name if editing else '' }}"></div>
+      <div><label>Category</label><input type="text" name="category" placeholder="Dairy Alt" value="{{ editing.category or '' if editing else '' }}"></div>
     </div>
     <div class="row">
-      <div><label>Category</label><input type="text" name="category" placeholder="Dairy Alt"></div>
-      <div><label>Unit of measure</label><input type="text" name="unit_of_measure" value="EA"></div>
-      <div><label>Case quantity</label><input type="number" name="case_quantity" value="1" min="1"></div>
-    </div>
-    <div class="row">
-      <div><label>Unleashed product GUID (optional)</label><input type="text" name="unleashed_product_guid"></div>
-      <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+      <div><label>Unit of measure</label><input type="text" name="unit_of_measure" value="{{ editing.unit_of_measure if editing else 'EA' }}"></div>
+      <div><label>Case quantity</label><input type="number" name="case_quantity" value="{{ editing.case_quantity if editing else 1 }}" min="1"></div>
+      <div><label>Unleashed product GUID (optional)</label><input type="text" name="unleashed_product_guid" value="{{ editing.unleashed_product_guid or '' if editing else '' }}"></div>
+      <div><label>Active</label>
+        <select name="active">
+          <option value="true" {% if not editing or editing.active %}selected{% endif %}>Yes</option>
+          <option value="false" {% if editing and not editing.active %}selected{% endif %}>No</option>
+        </select></div>
     </div>
     <div class="row" style="align-items:end">
       <div><label style="display:flex; align-items:center; gap:8px; margin-top:18px">
-        <input type="checkbox" name="assign_all_stores" value="true" checked style="width:auto">
+        <input type="checkbox" name="assign_all_stores" value="true" {% if not editing %}checked{% endif %} style="width:auto">
         Assign to all active stores (creates count-0 rows with auto tags)
       </label></div>
       <div><label>Default par level (for those rows)</label><input type="number" name="default_par" value="0" step="1"></div>
       <div><label>Default minimum</label><input type="number" name="default_min" value="0" step="1"></div>
     </div>
-    <button class="btn" style="margin-top:14px" type="submit">Save product</button>
+    <button class="btn" style="margin-top:14px" type="submit">{{ 'Save changes' if editing else 'Add product' }}</button>
   </form>
 </div>
 {% endblock %}

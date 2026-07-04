@@ -167,6 +167,55 @@ def test_backfill_adds_only_missing_products(client, db, inventory, store):
     assert db.query(StoreInventory).filter_by(store_id=store.id).count() == 2
 
 
+def test_delete_clean_product(client, db):
+    from app.models import Product
+
+    p = Product(product_code="GONE", display_name="Gone", unit_of_measure="EA", case_quantity=1, active=True)
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+
+    r = client.post(f"/admin/products/{p.id}/delete", follow_redirects=False)
+    assert "deleted" in r.headers["location"]
+    db.expunge_all()
+    assert db.get(Product, p.id) is None
+
+
+def test_delete_product_with_history_confirm_then_purge(client, db, inventory, product):
+    from app.models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, StoreInventory
+    from app.services import inventory_service, request_service
+
+    inventory_service.record_removal(db, inventory=inventory, quantity=1, source="scan")
+    req = request_service.generate_daily_request(db, store_id=inventory.store_id)
+
+    # First attempt: confirmation redirect, nothing deleted.
+    r = client.post(f"/admin/products/{product.id}/delete", follow_redirects=False)
+    assert f"confirm_delete={product.id}" in r.headers["location"]
+
+    r = client.post(f"/admin/products/{product.id}/delete", data={"force": "true"}, follow_redirects=False)
+    assert "permanently" in r.headers["location"]
+    db.expunge_all()
+    assert db.get(Product, product.id) is None
+    assert db.query(StoreInventory).filter_by(product_id=product.id).count() == 0
+    assert db.query(InventoryTransaction).filter_by(product_id=product.id).count() == 0
+    assert db.query(DailyRequestLine).filter_by(product_id=product.id).count() == 0
+    assert db.get(DailyRequest, req.id) is not None  # the request record itself survives
+
+
+def test_delete_inventory_item_keeps_ledger(client, db, inventory):
+    from app.models import InventoryTransaction, StoreInventory
+    from app.services import inventory_service
+
+    inventory_service.record_removal(db, inventory=inventory, quantity=1, source="scan")
+    sid, pid, item_id = inventory.store_id, inventory.product_id, inventory.id
+
+    r = client.post(f"/admin/inventory/{item_id}/delete", follow_redirects=False)
+    assert "history+kept" in r.headers["location"] or "history%20kept" in r.headers["location"]
+    db.expunge_all()
+    assert db.get(StoreInventory, item_id) is None
+    assert db.query(InventoryTransaction).filter_by(store_id=sid, product_id=pid).count() == 1
+
+
 def test_duplicate_email_reports_error_instead_of_500(client, db, admin):
     r = client.post(
         "/admin/users",
