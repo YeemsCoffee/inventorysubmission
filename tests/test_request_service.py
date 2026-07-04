@@ -72,6 +72,34 @@ def test_regenerate_after_failed_submit_does_not_violate_ledger_fk(db, inventory
     assert len(req2.lines) == 1
 
 
+def test_cancel_submitted_request_stops_polling(db, inventory):
+    """Cancelling retires the request locally; the poll sweep no longer touches it."""
+    from app.services import sync_service
+
+    req = request_service.generate_daily_request(db, store_id=inventory.store_id)
+    client = FakeUnleashedClient(order_status="Parked")
+    request_service.submit_to_unleashed(db, request_id=req.id, client=client)
+
+    req = request_service.cancel_request(db, request_id=req.id)
+    assert req.status == RequestStatus.CANCELLED
+
+    summary = sync_service.poll_open_requests(db, client=client)
+    assert summary["checked"] == 0  # cancelled request is not in the sweep
+
+    # Cancelling twice is a harmless no-op.
+    assert request_service.cancel_request(db, request_id=req.id).status == RequestStatus.CANCELLED
+
+
+def test_cannot_cancel_received_request(db, inventory):
+    req = request_service.generate_daily_request(db, store_id=inventory.store_id)
+    request_service.submit_to_unleashed(db, request_id=req.id, client=FakeUnleashedClient())
+    req.status = RequestStatus.RECEIVED
+    db.commit()
+
+    with pytest.raises(request_service.RequestError):
+        request_service.cancel_request(db, request_id=req.id)
+
+
 def test_submit_retry_reuses_same_guid(db, inventory):
     req = request_service.generate_daily_request(db, store_id=inventory.store_id)
     client = FakeUnleashedClient()

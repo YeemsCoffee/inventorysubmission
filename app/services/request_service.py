@@ -148,6 +148,41 @@ def override_line(
     return line
 
 
+def cancel_request(db: Session, *, request_id: int, cancelled_by: int | None = None) -> DailyRequest:
+    """Retire a request locally (poller stops watching it).
+
+    Does NOT touch Unleashed: if a Sales Order was created there, delete or
+    cancel it in Unleashed as well.
+    """
+    req = db.get(DailyRequest, request_id)
+    if req is None:
+        raise RequestError(f"Unknown request {request_id}")
+    if req.status == RequestStatus.CANCELLED:
+        return req
+    if req.status not in RequestStatus.CANCELLABLE:
+        raise RequestError(f"Request {request_id} is {req.status} and can no longer be cancelled")
+
+    req.status = RequestStatus.CANCELLED
+    req.error_message = None
+    for ln in req.lines:
+        inventory_service.record_audit(
+            db,
+            store_id=req.store_id,
+            product_id=ln.product_id,
+            transaction_type=TransactionType.REQUEST_CANCELLED,
+            source="manager",
+            daily_request_id=req.id,
+            daily_request_line_id=ln.id,
+            unleashed_sales_order_guid=req.unleashed_sales_order_guid,
+            unleashed_order_number=req.unleashed_order_number,
+            note="Request cancelled locally",
+        )
+    db.commit()
+    db.refresh(req)
+    logger.info("Request %s cancelled by user %s", req.id, cancelled_by)
+    return req
+
+
 def _build_payload(req: DailyRequest, store: Store, lines: list[tuple[DailyRequestLine, Product]]) -> dict:
     so_lines = []
     for line, product in lines:

@@ -59,6 +59,14 @@
     <p class="muted">Submitted to Unleashed. Counts will update automatically once the warehouse fulfills and completes the order.</p>
   {% elif req.status == 'RECEIVED' %}
     <p class="muted">Fulfilled quantities have been received into local inventory. ✓</p>
+  {% elif req.status == 'CANCELLED' %}
+    <p class="muted">Cancelled. This request is no longer watched for completion.</p>
+  {% endif %}
+  {% if req.status in ['DRAFT', 'SUBMITTED', 'SYNC_ERROR', 'COMPLETED', 'RECEIPT_ERROR'] %}
+  <form method="post" action="/manager/requests/{{ req.id }}/cancel" style="display:inline"
+        onsubmit="return confirm('Cancel request #{{ req.id }}? The app stops watching it. If a Sales Order was created in Unleashed, delete it there too — cancelling here does not remove it.')">
+    <button class="btn" type="submit" style="background:#dc2626">Cancel request</button>
+  </form>
   {% endif %}
   <a class="btn ghost" href="/manager/requests?store_id={{ req.store_id }}">← Back to requests</a>
 </div>

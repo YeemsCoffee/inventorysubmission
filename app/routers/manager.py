@@ -146,6 +146,17 @@ def override_line(
     return RedirectResponse(url=f"/manager/requests/{request_id}", status_code=303)
 
 
+@router.post("/requests/{request_id}/cancel")
+def cancel_request(
+    request_id: int, request: Request, db: Session = Depends(get_db), user: User = ManagerUser
+):
+    try:
+        request_service.cancel_request(db, request_id=request_id, cancelled_by=user.id)
+    except request_service.RequestError:
+        pass
+    return RedirectResponse(url=f"/manager/requests/{request_id}", status_code=303)
+
+
 @router.post("/requests/{request_id}/submit")
 def submit_request(
     request_id: int, request: Request, db: Session = Depends(get_db), user: User = ManagerUser
