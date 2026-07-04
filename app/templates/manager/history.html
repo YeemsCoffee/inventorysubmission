@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<h1>Inventory History</h1>
+<p class="muted">Every count change and its cause — scans, order receipts, corrections. Newest first (last 200).</p>
+
+<form method="get" action="/manager/history" class="card" style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap">
+  <div style="flex:1 1 200px">
+    <label for="store_id">Store</label>
+    <select id="store_id" name="store_id" onchange="this.form.submit()">
+      {% for s in stores %}<option value="{{ s.id }}" {{ 'selected' if s.id == store_id }}>{{ s.store_name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div style="flex:1 1 200px">
+    <label for="product_id">Product</label>
+    <select id="product_id" name="product_id" onchange="this.form.submit()">
+      <option value="">All products</option>
+      {% for p in products %}<option value="{{ p.id }}" {{ 'selected' if p.id == product_id }}>{{ p.display_name }}</option>{% endfor %}
+    </select>
+  </div>
+  <a class="btn ghost" href="/manager/inventory?store_id={{ store_id }}">← Inventory</a>
+</form>
+
+<div class="card" style="overflow-x:auto">
+  <table>
+    <thead>
+      <tr><th>When</th><th>Product</th><th>What</th><th class="right">Change</th><th class="right">Count</th>
+          <th>Reference</th><th>By</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+      {% for txn, product, emp in rows %}
+      <tr>
+        <td class="muted" style="white-space:nowrap">{{ txn.timestamp.strftime('%b %d %H:%M') }}</td>
+        <td>{{ product.display_name }}</td>
+        <td><span class="pill {{ 'ok' if txn.transaction_type == 'UNLEASHED_RECEIPT' else ('warn' if txn.transaction_type == 'STORE_REMOVAL' else ('info' if txn.transaction_type == 'COUNT_ADJUSTMENT' else 'muted')) }}">{{ txn.transaction_type }}</span></td>
+        <td class="right">
+          {% if txn.quantity_delta > 0 %}<b style="color:#166534">+{{ txn.quantity_delta | qty }}</b>
+          {% elif txn.quantity_delta < 0 %}<b style="color:#991b1b">−{{ (-txn.quantity_delta) | qty }}</b>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="right">{% if txn.quantity_delta != 0 %}{{ txn.quantity_before | qty }} → <b>{{ txn.quantity_after | qty }}</b>{% else %}<span class="muted">{{ txn.quantity_after | qty }}</span>{% endif %}</td>
+        <td>
+          {% if txn.daily_request_id %}<a href="/manager/requests/{{ txn.daily_request_id }}">Request #{{ txn.daily_request_id }}</a>{% endif %}
+          {% if txn.unleashed_order_number %}<div class="muted">Order {{ txn.unleashed_order_number }}</div>{% endif %}
+        </td>
+        <td>{{ emp.name if emp else (txn.source or '—') }}</td>
+        <td class="muted">{{ txn.note or '' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">No activity for this store yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..enums import Role
 from ..integrations.unleashed import UnleashedError
-from ..models import DailyRequest, Product, Store, StoreInventory, User
+from ..models import DailyRequest, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import require_roles
 from ..services import inventory_service, request_service
 from ..templating import render
@@ -80,6 +80,40 @@ def adjust_count(
             db, inventory=inv, new_count=new_count, employee_id=user.id, note=note or None
         )
     return RedirectResponse(url=f"/manager/inventory?store_id={store_id or inv.store_id}", status_code=303)
+
+
+@router.get("/history")
+def history_page(
+    request: Request,
+    store_id: int | None = None,
+    product_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = ManagerUser,
+):
+    """The inventory ledger: every count change with its cause (scan, order, correction)."""
+    sid = _resolve_store_id(user, store_id, db)
+    rows = []
+    products = []
+    if sid:
+        q = (
+            select(InventoryTransaction, Product, User)
+            .join(Product, Product.id == InventoryTransaction.product_id)
+            .outerjoin(User, User.id == InventoryTransaction.employee_id)
+            .where(InventoryTransaction.store_id == sid)
+            .order_by(InventoryTransaction.id.desc())
+            .limit(200)
+        )
+        if product_id:
+            q = q.where(InventoryTransaction.product_id == product_id)
+        rows = db.execute(q).all()
+        products = list(
+            db.execute(select(Product).where(Product.active.is_(True)).order_by(Product.display_name)).scalars()
+        )
+    return render(
+        request,
+        "manager/history.html",
+        {"stores": _stores(db), "store_id": sid, "product_id": product_id, "rows": rows, "products": products},
+    )
 
 
 @router.get("/requests")

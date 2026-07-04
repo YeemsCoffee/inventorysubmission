@@ -14,6 +14,7 @@
       {% if user.role in ['STORE_MANAGER','ADMIN'] %}
         <a href="/manager/inventory">Inventory</a>
         <a href="/manager/requests">Requests</a>
+        <a href="/manager/history">History</a>
       {% endif %}
       {% if user.role in ['WAREHOUSE','ADMIN'] %}
         <a href="/warehouse/requests">Sync Status</a>
