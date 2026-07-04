@@ -3,12 +3,23 @@
 {% block content %}
 <h1>Store Inventory / Par Levels / Tags</h1>
 
+{% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+{% if err %}<div class="flash error">{{ err }}</div>{% endif %}
+
 <form method="get" action="/admin/inventory" class="card">
   <label for="store_id">Store</label>
   <select id="store_id" name="store_id" onchange="this.form.submit()" style="max-width:280px">
     {% for s in stores %}<option value="{{ s.id }}" {{ 'selected' if s.id == store_id }}>{{ s.store_name }}</option>{% endfor %}
   </select>
 </form>
+
+{% if store_id %}
+<form method="post" action="/admin/inventory/backfill" style="margin-bottom:14px">
+  <input type="hidden" name="store_id" value="{{ store_id }}">
+  <button class="btn" type="submit">Add all missing products to this store</button>
+  <span class="muted" style="margin-left:8px">Creates count-0 rows with auto tags for any active product this store doesn't have yet.</span>
+</form>
+{% endif %}
 
 <div class="card">
   <table>

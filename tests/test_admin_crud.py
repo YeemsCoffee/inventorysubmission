@@ -42,12 +42,30 @@ def test_delete_unreferenced_store(client, db):
     assert db.get(Store, s.id) is None
 
 
-def test_delete_store_with_history_deactivates_instead(client, db, inventory):
+def test_delete_store_with_history_requires_confirmation(client, db, inventory):
     r = client.post(f"/admin/stores/{inventory.store_id}/delete", follow_redirects=False)
-    assert "deactivated" in r.headers["location"]
+    assert f"confirm_delete={inventory.store_id}" in r.headers["location"]
     db.expire_all()
     s = db.get(Store, inventory.store_id)
-    assert s is not None and s.active is False
+    assert s is not None and s.active is True  # nothing changed yet
+
+
+def test_force_delete_store_purges_all_history(client, db, inventory):
+    from app.models import DailyRequest, InventoryTransaction, StoreInventory
+    from app.services import inventory_service, request_service
+
+    sid = inventory.store_id
+    # Real history: a scan removal + a generated draft request with a line.
+    inventory_service.record_removal(db, inventory=inventory, quantity=2, source="scan")
+    request_service.generate_daily_request(db, store_id=sid)
+
+    r = client.post(f"/admin/stores/{sid}/delete", data={"force": "true"}, follow_redirects=False)
+    assert "permanently+deleted" in r.headers["location"] or "permanently%20deleted" in r.headers["location"]
+    db.expunge_all()
+    assert db.get(Store, sid) is None
+    assert db.query(StoreInventory).filter_by(store_id=sid).count() == 0
+    assert db.query(InventoryTransaction).filter_by(store_id=sid).count() == 0
+    assert db.query(DailyRequest).filter_by(store_id=sid).count() == 0
 
 
 def test_cannot_delete_own_account(client, db, admin):
@@ -69,7 +87,7 @@ def test_delete_clean_user(client, db):
     assert db.get(User, emp.id) is None
 
 
-def test_user_with_history_is_deactivated_not_deleted(client, db, store):
+def test_user_with_history_requires_confirmation_then_detaches(client, db, store):
     mgr = User(
         name="Mgr", email="mgr@test.local", role=Role.STORE_MANAGER,
         password_hash=hash_password("pw"), active=True,
@@ -77,14 +95,22 @@ def test_user_with_history_is_deactivated_not_deleted(client, db, store):
     db.add(mgr)
     db.commit()
     db.refresh(mgr)
-    db.add(DailyRequest(store_id=store.id, status=RequestStatus.SUBMITTED, submitted_by=mgr.id))
+    req = DailyRequest(store_id=store.id, status=RequestStatus.SUBMITTED, submitted_by=mgr.id)
+    db.add(req)
     db.commit()
+    db.refresh(req)
 
+    # First attempt: asks for confirmation, deletes nothing.
     r = client.post(f"/admin/users/{mgr.id}/delete", follow_redirects=False)
-    assert "deactivated" in r.headers["location"]
-    db.expire_all()
-    u = db.get(User, mgr.id)
-    assert u is not None and u.active is False
+    assert f"confirm_delete={mgr.id}" in r.headers["location"]
+
+    # Forced: account gone, request history kept but de-attributed.
+    r = client.post(f"/admin/users/{mgr.id}/delete", data={"force": "true"}, follow_redirects=False)
+    assert "deleted" in r.headers["location"]
+    db.expunge_all()
+    assert db.get(User, mgr.id) is None
+    kept = db.get(DailyRequest, req.id)
+    assert kept is not None and kept.submitted_by is None
 
 
 def test_cannot_deactivate_last_admin_via_save(client, db, admin):
@@ -96,6 +122,49 @@ def test_cannot_deactivate_last_admin_via_save(client, db, admin):
     assert "err=" in r.headers["location"]
     db.expire_all()
     assert db.get(User, admin.id).active is True
+
+
+def test_new_product_assigned_to_all_stores(client, db, store):
+    from app.models import Product, StoreInventory
+
+    other = Store(store_code="GARDENA", store_name="Gardena", unleashed_customer_code="GARDENA", active=True)
+    db.add(other)
+    db.commit()
+
+    r = client.post(
+        "/admin/products",
+        data={
+            "product_code": "HAZSYR", "display_name": "Hazelnut Syrup", "unit_of_measure": "BTL",
+            "case_quantity": "6", "active": "true",
+            "assign_all_stores": "true", "default_par": "8", "default_min": "2",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and "msg=" in r.headers["location"]
+    db.expunge_all()
+    product = db.query(Product).filter_by(product_code="HAZSYR").one()
+    rows = db.query(StoreInventory).filter_by(product_id=product.id).all()
+    assert len(rows) == 2
+    assert {row.tag_id for row in rows} == {"KTOWN-HAZSYR", "GARDENA-HAZSYR"}
+    assert all(row.par_level == 8 and row.minimum_level == 2 and row.current_count == 0 for row in rows)
+
+
+def test_backfill_adds_only_missing_products(client, db, inventory, store):
+    from app.models import Product, StoreInventory
+
+    extra = Product(product_code="EXTRA", display_name="Extra", unit_of_measure="EA", case_quantity=1, active=True)
+    db.add(extra)
+    db.commit()
+
+    r = client.post("/admin/inventory/backfill", data={"store_id": store.id}, follow_redirects=False)
+    assert "Added+1" in r.headers["location"] or "Added%201" in r.headers["location"]
+    db.expunge_all()
+    assert db.query(StoreInventory).filter_by(store_id=store.id).count() == 2
+
+    # Idempotent: running again adds nothing.
+    client.post("/admin/inventory/backfill", data={"store_id": store.id}, follow_redirects=False)
+    db.expunge_all()
+    assert db.query(StoreInventory).filter_by(store_id=store.id).count() == 2
 
 
 def test_duplicate_email_reports_error_instead_of_500(client, db, admin):

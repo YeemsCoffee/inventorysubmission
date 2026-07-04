@@ -7,6 +7,24 @@
 {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
 {% if err %}<div class="flash error">{{ err }}</div>{% endif %}
 
+{% if confirming %}
+<div class="card" style="border:2px solid #dc2626">
+  <h2 style="color:#dc2626">Permanently delete {{ confirming.store_name }}?</h2>
+  <p>This store has history that will be <b>erased forever</b>:</p>
+  <ul>
+    <li><b>{{ confirm_counts.inventory }}</b> inventory item(s) and their tags</li>
+    <li><b>{{ confirm_counts.requests }}</b> replenishment request(s)</li>
+    <li><b>{{ confirm_counts.transactions }}</b> ledger entrie(s) (scans, receipts, adjustments)</li>
+  </ul>
+  <p class="muted">If you only want it off the screens but keep the history, cancel and set the store to Active: No instead.</p>
+  <form method="post" action="/admin/stores/{{ confirming.id }}/delete" style="display:inline">
+    <input type="hidden" name="force" value="true">
+    <button type="submit" class="btn" style="background:#dc2626">Yes, permanently delete {{ confirming.store_name }}</button>
+  </form>
+  <a href="/admin/stores" class="btn" style="margin-left:8px; background:#6b7280">Cancel</a>
+</div>
+{% endif %}
+
 <div class="card">
   <table>
     <thead><tr><th>Code</th><th>Name</th><th>Unleashed Customer</th><th>Active</th><th>Actions</th></tr></thead>
@@ -19,7 +37,7 @@
         <td>
           <a href="/admin/stores?edit={{ s.id }}">Edit</a>
           <form method="post" action="/admin/stores/{{ s.id }}/delete" style="display:inline; margin-left:8px"
-                onsubmit="return confirm('Delete {{ s.store_name }}? If it has any history it will be deactivated instead.')">
+                onsubmit="return confirm('Delete {{ s.store_name }}? If it has history you will be asked to confirm before anything is erased.')">
             <button type="submit" class="btn" style="background:#dc2626; padding:4px 10px; font-size:13px">Delete</button>
           </form>
         </td>

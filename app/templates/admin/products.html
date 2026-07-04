@@ -4,6 +4,9 @@
 <h1>Products</h1>
 <p class="muted">Product codes must match the Unleashed product codes.</p>
 
+{% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+{% if err %}<div class="flash error">{{ err }}</div>{% endif %}
+
 <div class="card">
   <table>
     <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>UoM</th><th class="right">Case</th><th>Active</th></tr></thead>
@@ -32,6 +35,14 @@
     <div class="row">
       <div><label>Unleashed product GUID (optional)</label><input type="text" name="unleashed_product_guid"></div>
       <div><label>Active</label><select name="active"><option value="true">Yes</option><option value="false">No</option></select></div>
+    </div>
+    <div class="row" style="align-items:end">
+      <div><label style="display:flex; align-items:center; gap:8px; margin-top:18px">
+        <input type="checkbox" name="assign_all_stores" value="true" checked style="width:auto">
+        Assign to all active stores (creates count-0 rows with auto tags)
+      </label></div>
+      <div><label>Default par level (for those rows)</label><input type="number" name="default_par" value="0" step="1"></div>
+      <div><label>Default minimum</label><input type="number" name="default_min" value="0" step="1"></div>
     </div>
     <button class="btn" style="margin-top:14px" type="submit">Save product</button>
   </form>

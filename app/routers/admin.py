@@ -13,7 +13,7 @@ from ..config import get_settings
 from ..database import get_db
 from ..enums import Role
 from ..integrations.unleashed import UnleashedClient, UnleashedError
-from ..models import DailyRequest, InventoryTransaction, Product, Store, StoreInventory, User
+from ..models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import hash_password, require_roles
 from ..templating import render
 
@@ -47,6 +47,7 @@ def admin_home(request: Request, db: Session = Depends(get_db), user: User = Adm
 def stores_page(
     request: Request,
     edit: int | None = None,
+    confirm_delete: int | None = None,
     msg: str | None = None,
     err: str | None = None,
     db: Session = Depends(get_db),
@@ -54,7 +55,22 @@ def stores_page(
 ):
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
     editing = db.get(Store, edit) if edit else None
-    return render(request, "admin/stores.html", {"stores": stores, "editing": editing, "msg": msg, "err": err})
+    confirming = db.get(Store, confirm_delete) if confirm_delete else None
+    counts = None
+    if confirming is not None:
+        counts = {
+            "inventory": db.query(StoreInventory.id).filter(StoreInventory.store_id == confirming.id).count(),
+            "requests": db.query(DailyRequest.id).filter(DailyRequest.store_id == confirming.id).count(),
+            "transactions": db.query(InventoryTransaction.id)
+            .filter(InventoryTransaction.store_id == confirming.id)
+            .count(),
+        }
+    return render(
+        request,
+        "admin/stores.html",
+        {"stores": stores, "editing": editing, "confirming": confirming, "confirm_counts": counts,
+         "msg": msg, "err": err},
+    )
 
 
 @router.post("/stores")
@@ -86,36 +102,83 @@ def stores_save(
 
 
 @router.post("/stores/{store_id}/delete")
-def stores_delete(store_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+def stores_delete(
+    store_id: int,
+    force: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     store = db.get(Store, store_id)
     if store is None:
         return _redirect("/admin/stores", err="Store not found.")
     name = store.store_name
-    # History (inventory, ledger, requests) must never be orphaned: a store with
-    # any of it is deactivated instead of deleted.
     has_history = (
         db.query(StoreInventory.id).filter(StoreInventory.store_id == store_id).first() is not None
         or db.query(InventoryTransaction.id).filter(InventoryTransaction.store_id == store_id).first() is not None
         or db.query(DailyRequest.id).filter(DailyRequest.store_id == store_id).first() is not None
     )
+    if has_history and not force:
+        # Deleting history is irreversible — show an explicit confirmation first.
+        return _redirect(f"/admin/stores?confirm_delete={store_id}")
     if has_history:
-        store.active = False
-        db.commit()
-        return _redirect(
-            "/admin/stores",
-            msg=f"{name} has inventory/request history, so it was deactivated instead of deleted.",
+        # Purge in FK order: ledger -> request lines -> requests -> inventory.
+        request_ids = [rid for (rid,) in db.query(DailyRequest.id).filter(DailyRequest.store_id == store_id)]
+        db.query(InventoryTransaction).filter(InventoryTransaction.store_id == store_id).delete(
+            synchronize_session=False
         )
+        if request_ids:
+            db.query(DailyRequestLine).filter(DailyRequestLine.daily_request_id.in_(request_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(DailyRequest).filter(DailyRequest.id.in_(request_ids)).delete(synchronize_session=False)
+        db.query(StoreInventory).filter(StoreInventory.store_id == store_id).delete(synchronize_session=False)
     db.query(User).filter(User.store_id == store_id).update({"store_id": None})
     db.delete(store)
     db.commit()
+    if has_history:
+        return _redirect("/admin/stores", msg=f"Store {name} and all its history permanently deleted.")
     return _redirect("/admin/stores", msg=f"Store {name} deleted.")
 
 
 # ---- Products --------------------------------------------------------
+def _ensure_inventory_rows(
+    db: Session, product: Product, stores: list[Store], *, par: float = 0.0, minimum: float = 0.0
+) -> int:
+    """Create missing StoreInventory rows for a product (tag auto-named
+    {STORE_CODE}-{PRODUCT_CODE}; left blank if that tag is already taken)."""
+    created = 0
+    for store in stores:
+        exists = (
+            db.query(StoreInventory.id)
+            .filter(StoreInventory.store_id == store.id, StoreInventory.product_id == product.id)
+            .first()
+        )
+        if exists:
+            continue
+        tag = f"{store.store_code}-{product.product_code}"
+        tag_taken = db.query(StoreInventory.id).filter(StoreInventory.tag_id == tag).first()
+        db.add(
+            StoreInventory(
+                store_id=store.id, product_id=product.id, current_count=0,
+                par_level=par, minimum_level=minimum,
+                tag_id=None if tag_taken else tag,
+                storage_location="Back Storage", active=True,
+            )
+        )
+        created += 1
+    return created
+
+
 @router.get("/products")
-def products_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+def products_page(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     products = list(db.execute(select(Product).order_by(Product.display_name)).scalars())
-    return render(request, "admin/products.html", {"products": products})
+    return render(request, "admin/products.html", {"products": products, "msg": msg, "err": err})
 
 
 @router.post("/products")
@@ -129,6 +192,9 @@ def products_save(
     case_quantity: int = Form(1),
     unleashed_product_guid: str = Form(""),
     active: bool = Form(False),
+    assign_all_stores: bool = Form(False),
+    default_par: float = Form(0),
+    default_min: float = Form(0),
     db: Session = Depends(get_db),
     user: User = AdminUser,
 ):
@@ -142,13 +208,32 @@ def products_save(
     product.active = active
     if not id:
         db.add(product)
-    db.commit()
-    return RedirectResponse(url="/admin/products", status_code=303)
+    created = 0
+    if assign_all_stores:
+        db.flush()  # ensure product.id for new products
+        stores = list(db.execute(select(Store).where(Store.active.is_(True))).scalars())
+        created = _ensure_inventory_rows(db, product, stores, par=default_par, minimum=default_min)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _redirect("/admin/products", err=f"Product code '{product_code.strip()}' is already in use.")
+    msg = f"Product {product.display_name} saved."
+    if created:
+        msg += f" Added to {created} store(s) — set par levels under Store Inventory."
+    return _redirect("/admin/products", msg=msg)
 
 
 # ---- Store inventory / par / tags ------------------------------------
 @router.get("/inventory")
-def inventory_page(request: Request, store_id: int | None = None, db: Session = Depends(get_db), user: User = AdminUser):
+def inventory_page(
+    request: Request,
+    store_id: int | None = None,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
     sid = store_id or (stores[0].id if stores else None)
     rows = []
@@ -163,8 +248,32 @@ def inventory_page(request: Request, store_id: int | None = None, db: Session = 
     return render(
         request,
         "admin/inventory.html",
-        {"stores": stores, "store_id": sid, "rows": rows, "products": products, "base_url": get_settings().base_url},
+        {"stores": stores, "store_id": sid, "rows": rows, "products": products,
+         "base_url": get_settings().base_url, "msg": msg, "err": err},
     )
+
+
+@router.post("/inventory/backfill")
+def inventory_backfill(
+    store_id: int = Form(...),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    """Create rows (count 0, par 0) for every active product this store lacks."""
+    store = db.get(Store, store_id)
+    if store is None:
+        return _redirect("/admin/inventory", err="Store not found.")
+    products = list(db.execute(select(Product).where(Product.active.is_(True))).scalars())
+    created = 0
+    for product in products:
+        created += _ensure_inventory_rows(db, product, [store])
+    db.commit()
+    if created:
+        return _redirect(
+            f"/admin/inventory?store_id={store_id}",
+            msg=f"Added {created} missing product(s) to {store.store_name} — now set their par levels.",
+        )
+    return _redirect(f"/admin/inventory?store_id={store_id}", msg=f"{store.store_name} already has every active product.")
 
 
 @router.post("/inventory")
@@ -196,8 +305,15 @@ def inventory_save(
     inv.active = active
     if not id:
         db.add(inv)
-    db.commit()
-    return RedirectResponse(url=f"/admin/inventory?store_id={store_id}", status_code=303)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _redirect(
+            f"/admin/inventory?store_id={store_id}",
+            err="Could not save: this store already has that product, or the tag ID is used elsewhere.",
+        )
+    return _redirect(f"/admin/inventory?store_id={store_id}", msg="Item saved.")
 
 
 @router.get("/tags")
@@ -217,6 +333,7 @@ def tags_page(request: Request, db: Session = Depends(get_db), user: User = Admi
 def users_page(
     request: Request,
     edit: int | None = None,
+    confirm_delete: int | None = None,
     msg: str | None = None,
     err: str | None = None,
     db: Session = Depends(get_db),
@@ -225,10 +342,12 @@ def users_page(
     users = list(db.execute(select(User).order_by(User.name)).scalars())
     stores = list(db.execute(select(Store).order_by(Store.store_name)).scalars())
     editing = db.get(User, edit) if edit else None
+    confirming = db.get(User, confirm_delete) if confirm_delete else None
     return render(
         request,
         "admin/users.html",
-        {"users": users, "stores": stores, "roles": sorted(Role.ALL), "editing": editing, "msg": msg, "err": err},
+        {"users": users, "stores": stores, "roles": sorted(Role.ALL), "editing": editing,
+         "confirming": confirming, "msg": msg, "err": err},
     )
 
 
@@ -273,7 +392,12 @@ def users_save(
 
 
 @router.post("/users/{user_id}/delete")
-def users_delete(user_id: int, db: Session = Depends(get_db), user: User = AdminUser):
+def users_delete(
+    user_id: int,
+    force: bool = Form(False),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
     target = db.get(User, user_id)
     if target is None:
         return _redirect("/admin/users", err="User not found.")
@@ -288,18 +412,19 @@ def users_delete(user_id: int, db: Session = Depends(get_db), user: User = Admin
         if other_admins is None:
             return _redirect("/admin/users", err="Cannot delete the last active admin.")
     name = target.name
-    # Users referenced by the ledger or by submitted requests are deactivated
-    # (login disabled) so the audit history keeps its author.
     has_history = (
         db.query(InventoryTransaction.id).filter(InventoryTransaction.employee_id == user_id).first() is not None
         or db.query(DailyRequest.id).filter(DailyRequest.submitted_by == user_id).first() is not None
     )
+    if has_history and not force:
+        return _redirect(f"/admin/users?confirm_delete={user_id}")
     if has_history:
-        target.active = False
-        db.commit()
-        return _redirect(
-            "/admin/users",
-            msg=f"{name} has activity history, so the account was deactivated (login disabled) instead of deleted.",
+        # Keep the store's history; just remove this person's name from it.
+        db.query(InventoryTransaction).filter(InventoryTransaction.employee_id == user_id).update(
+            {"employee_id": None}, synchronize_session=False
+        )
+        db.query(DailyRequest).filter(DailyRequest.submitted_by == user_id).update(
+            {"submitted_by": None}, synchronize_session=False
         )
     db.delete(target)
     db.commit()
