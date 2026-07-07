@@ -46,10 +46,14 @@ class Settings(BaseSettings):
 
     @field_validator("base_url", "unleashed_api_url")
     @classmethod
-    def _strip_trailing_slash(cls, v: str) -> str:
-        # A trailing slash would produce double-slash URLs ("//scan/..."), which
-        # don't match any route and 404.
-        return v.rstrip("/")
+    def _normalize_url(cls, v: str) -> str:
+        # Without a scheme the browser treats built links as *relative* paths
+        # (".../admin/<host>/scan/x"); with a trailing slash they get a double
+        # slash ("//scan/x"). Both 404 — normalize away the two typos.
+        v = v.strip().rstrip("/")
+        if v and not v.lower().startswith(("http://", "https://")):
+            v = f"https://{v}"
+        return v
 
     @property
     def unleashed_configured(self) -> bool:
