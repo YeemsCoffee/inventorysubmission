@@ -14,7 +14,9 @@ from ..database import get_db
 from ..enums import Role
 from ..integrations.unleashed import UnleashedClient, UnleashedError
 from ..models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, Store, StoreInventory, User
+from ..scheduler import reschedule_auto_submit
 from ..security import hash_password, require_roles
+from ..services import settings_service
 from ..services.product_import import ImportFormatError, ensure_inventory_rows, import_products_csv
 from ..templating import render
 
@@ -505,10 +507,9 @@ def users_delete(
 
 
 # ---- Unleashed settings ---------------------------------------------
-@router.get("/settings")
-def settings_page(request: Request, db: Session = Depends(get_db), user: User = AdminUser):
+def _settings_view() -> dict:
     s = get_settings()
-    view = {
+    return {
         "configured": s.unleashed_configured,
         "api_url": s.unleashed_api_url,
         "fulfill_warehouse_code": s.unleashed_fulfill_warehouse_code,
@@ -521,7 +522,53 @@ def settings_page(request: Request, db: Session = Depends(get_db), user: User = 
         "api_id_set": bool(s.unleashed_api_id),
         "api_key_set": bool(s.unleashed_api_key),
     }
-    return render(request, "admin/settings.html", {"v": view, "test_result": None})
+
+
+def _settings_context(db: Session, **extra) -> dict:
+    ctx = {
+        "v": _settings_view(),
+        "auto": settings_service.get_auto_submit_config(db),
+        "timezones": settings_service.COMMON_TIMEZONES,
+        "test_result": None,
+        "msg": None,
+        "err": None,
+    }
+    ctx.update(extra)
+    return ctx
+
+
+@router.get("/settings")
+def settings_page(
+    request: Request,
+    msg: str | None = None,
+    err: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    return render(request, "admin/settings.html", _settings_context(db, msg=msg, err=err))
+
+
+@router.post("/settings/auto-submit")
+def settings_auto_submit(
+    enabled: bool = Form(False),
+    time_str: str = Form(...),
+    timezone_str: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    try:
+        cfg = settings_service.save_auto_submit_config(
+            db, enabled=enabled, time_str=time_str, timezone_str=timezone_str
+        )
+    except ValueError as exc:
+        return _redirect("/admin/settings", err=str(exc))
+    reschedule_auto_submit()  # apply to the live scheduler without a restart
+    if cfg["enabled"]:
+        return _redirect(
+            "/admin/settings",
+            msg=f"Auto-submit ON — requests go to Unleashed daily at {cfg['time']} ({cfg['timezone']}).",
+        )
+    return _redirect("/admin/settings", msg="Auto-submit turned off — requests are submitted manually.")
 
 
 @router.post("/settings/test")
@@ -536,16 +583,4 @@ def settings_test(request: Request, db: Session = Depends(get_db), user: User = 
             test_result = {"ok": True, "message": "Connected to Unleashed successfully."}
         except UnleashedError as exc:
             test_result["message"] = f"Connection failed: {exc}"
-    view = {
-        "configured": s.unleashed_configured,
-        "api_url": s.unleashed_api_url,
-        "fulfill_warehouse_code": s.unleashed_fulfill_warehouse_code,
-        "create_order_status": s.unleashed_create_order_status,
-        "use_shipments": s.unleashed_receipt_use_shipments,
-        "fallback_to_order": s.unleashed_receipt_fallback_to_order,
-        "polling_enabled": s.polling_enabled,
-        "polling_interval_minutes": s.polling_interval_minutes,
-        "api_id_set": bool(s.unleashed_api_id),
-        "api_key_set": bool(s.unleashed_api_key),
-    }
-    return render(request, "admin/settings.html", {"v": view, "test_result": test_result})
+    return render(request, "admin/settings.html", _settings_context(db, test_result=test_result))

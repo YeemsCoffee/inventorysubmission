@@ -1,8 +1,6 @@
 """Store Manager screens: live inventory, count corrections, daily requests."""
 from __future__ import annotations
 
-from datetime import date
-
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -13,7 +11,7 @@ from ..enums import Role
 from ..integrations.unleashed import UnleashedError
 from ..models import DailyRequest, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import require_roles
-from ..services import inventory_service, request_service
+from ..services import inventory_service, request_service, settings_service
 from ..templating import render
 
 router = APIRouter(prefix="/manager")
@@ -144,7 +142,12 @@ def generate_request(
     db: Session = Depends(get_db),
     user: User = ManagerUser,
 ):
-    req = request_service.generate_daily_request(db, store_id=store_id, request_date=date.today())
+    # Business-timezone "today" (the server runs UTC; late afternoon local time
+    # is already tomorrow in UTC) — keeps manual and auto-submitted requests on
+    # the same daily request.
+    req = request_service.generate_daily_request(
+        db, store_id=store_id, request_date=settings_service.local_today(db)
+    )
     return RedirectResponse(url=f"/manager/requests/{req.id}", status_code=303)
 
 

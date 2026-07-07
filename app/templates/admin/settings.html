@@ -7,6 +7,32 @@
 {% if test_result %}
   <div class="flash {{ 'ok' if test_result.ok else 'error' }}">{{ test_result.message }}</div>
 {% endif %}
+{% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+{% if err %}<div class="flash error">{{ err }}</div>{% endif %}
+
+<div class="card">
+  <h2>Daily auto-submit</h2>
+  <p class="muted">At the chosen time each day, every store's request is generated from current counts and submitted
+     to Unleashed automatically. Drafts a manager has hand-edited are submitted as-is (overrides respected);
+     stores with nothing below par are skipped; a cancelled request means that store is skipped for the day.</p>
+  <form method="post" action="/admin/settings/auto-submit">
+    <div class="row" style="align-items:end">
+      <div><label style="display:flex; align-items:center; gap:8px; margin-top:18px">
+        <input type="checkbox" name="enabled" value="true" {% if auto.enabled %}checked{% endif %} style="width:auto">
+        Enable daily auto-submit
+      </label></div>
+      <div><label>Time (24-hour)</label><input type="time" name="time_str" value="{{ auto.time }}" required></div>
+      <div><label>Timezone</label>
+        <select name="timezone_str">
+          {% for tz in timezones %}<option value="{{ tz }}" {% if auto.timezone == tz %}selected{% endif %}>{{ tz }}</option>{% endfor %}
+          {% if auto.timezone not in timezones %}<option value="{{ auto.timezone }}" selected>{{ auto.timezone }}</option>{% endif %}
+        </select></div>
+    </div>
+    <button class="btn" style="margin-top:14px" type="submit">Save schedule</button>
+    {% if auto.enabled %}<span class="muted" style="margin-left:8px">Currently: daily at {{ auto.time }} ({{ auto.timezone }})</span>
+    {% else %}<span class="muted" style="margin-left:8px">Currently: off — requests are submitted manually</span>{% endif %}
+  </form>
+</div>
 
 <div class="card">
   <table>
