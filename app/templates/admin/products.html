@@ -78,4 +78,24 @@
     <button class="btn" style="margin-top:14px" type="submit">{{ 'Save changes' if editing else 'Add product' }}</button>
   </form>
 </div>
+
+<div class="card">
+  <h2>Import from Unleashed</h2>
+  <p class="muted">Upload the <b>Product List CSV</b> exported from Unleashed (Inventory → Products → Export).
+     Codes that already exist are updated; new ones are created. Warehouse columns (On Hand, Bin, Allocated) are
+     ignored — store counts never come from Unleashed. Case quantities aren't in the export, so edit items sold
+     by the case afterwards.</p>
+  <form method="post" action="/admin/products/import" enctype="multipart/form-data">
+    <div class="row" style="align-items:end">
+      <div><label>CSV file</label><input type="file" name="file" accept=".csv,text/csv" required></div>
+      <div><label style="display:flex; align-items:center; gap:8px; margin-top:18px">
+        <input type="checkbox" name="assign_all_stores" value="true" checked style="width:auto">
+        Assign imported products to all active stores
+      </label></div>
+      <div><label>Default par level</label><input type="number" name="default_par" value="0" step="1"></div>
+      <div><label>Default minimum</label><input type="number" name="default_min" value="0" step="1"></div>
+    </div>
+    <button class="btn" style="margin-top:14px" type="submit">Import CSV</button>
+  </form>
+</div>
 {% endblock %}

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +15,7 @@ from ..enums import Role
 from ..integrations.unleashed import UnleashedClient, UnleashedError
 from ..models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import hash_password, require_roles
+from ..services.product_import import ImportFormatError, ensure_inventory_rows, import_products_csv
 from ..templating import render
 
 router = APIRouter(prefix="/admin")
@@ -141,34 +142,6 @@ def stores_delete(
 
 
 # ---- Products --------------------------------------------------------
-def _ensure_inventory_rows(
-    db: Session, product: Product, stores: list[Store], *, par: float = 0.0, minimum: float = 0.0
-) -> int:
-    """Create missing StoreInventory rows for a product (tag auto-named
-    {STORE_CODE}-{PRODUCT_CODE}; left blank if that tag is already taken)."""
-    created = 0
-    for store in stores:
-        exists = (
-            db.query(StoreInventory.id)
-            .filter(StoreInventory.store_id == store.id, StoreInventory.product_id == product.id)
-            .first()
-        )
-        if exists:
-            continue
-        tag = f"{store.store_code}-{product.product_code}"
-        tag_taken = db.query(StoreInventory.id).filter(StoreInventory.tag_id == tag).first()
-        db.add(
-            StoreInventory(
-                store_id=store.id, product_id=product.id, current_count=0,
-                par_level=par, minimum_level=minimum,
-                tag_id=None if tag_taken else tag,
-                storage_location="Back Storage", active=True,
-            )
-        )
-        created += 1
-    return created
-
-
 @router.get("/products")
 def products_page(
     request: Request,
@@ -232,7 +205,7 @@ def products_save(
     if assign_all_stores:
         db.flush()  # ensure product.id for new products
         stores = list(db.execute(select(Store).where(Store.active.is_(True))).scalars())
-        created = _ensure_inventory_rows(db, product, stores, par=default_par, minimum=default_min)
+        created = ensure_inventory_rows(db, product, stores, par=default_par, minimum=default_min)
     try:
         db.commit()
     except IntegrityError:
@@ -241,6 +214,34 @@ def products_save(
     msg = f"Product {product.display_name} saved."
     if created:
         msg += f" Added to {created} store(s) — set par levels under Store Inventory."
+    return _redirect("/admin/products", msg=msg)
+
+
+@router.post("/products/import")
+async def products_import(
+    file: UploadFile = File(...),
+    assign_all_stores: bool = Form(False),
+    default_par: float = Form(0),
+    default_min: float = Form(0),
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    try:
+        result = import_products_csv(
+            db, text, assign_all_stores=assign_all_stores, default_par=default_par, default_min=default_min
+        )
+    except ImportFormatError as exc:
+        return _redirect("/admin/products", err=str(exc))
+    msg = f"Imported {result['created'] + result['updated']} products ({result['created']} new, {result['updated']} updated)."
+    if result["assigned"]:
+        msg += f" Assigned to stores (+{result['assigned']} rows) — set par levels under Store Inventory."
+    if result["skipped"]:
+        msg += f" Skipped {result['skipped']} row(s) without a usable code."
     return _redirect("/admin/products", msg=msg)
 
 
@@ -338,7 +339,7 @@ def inventory_backfill(
     products = list(db.execute(select(Product).where(Product.active.is_(True))).scalars())
     created = 0
     for product in products:
-        created += _ensure_inventory_rows(db, product, [store])
+        created += ensure_inventory_rows(db, product, [store])
     db.commit()
     if created:
         return _redirect(
