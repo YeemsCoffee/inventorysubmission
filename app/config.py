@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,6 +43,13 @@ class Settings(BaseSettings):
     # --- Polling ---
     polling_enabled: bool = True
     polling_interval_minutes: int = 10
+
+    @field_validator("base_url", "unleashed_api_url")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str) -> str:
+        # A trailing slash would produce double-slash URLs ("//scan/..."), which
+        # don't match any route and 404.
+        return v.rstrip("/")
 
     @property
     def unleashed_configured(self) -> bool:
