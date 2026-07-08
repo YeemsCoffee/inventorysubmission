@@ -1,0 +1,16 @@
+{% if attention and attention.total %}
+<div class="flash error">
+  <b>⚠ Needs attention ({{ attention.total }}{% if attention.truncated %}+{% endif %})</b>
+  <ul style="margin:8px 0 0 18px; padding:0">
+    {% for item in attention['items'] %}
+    <li style="margin-bottom:4px">
+      {# Managers/admins can open the request; warehouse acts from its own Sync Status table. #}
+      {% if user and user.role in ['STORE_MANAGER', 'ADMIN'] %}<a href="/manager/requests/{{ item.request_id }}">{{ item.label }}</a>
+      {% else %}{{ item.label }}{% endif %}
+      {% if item.detail %}<div class="muted" style="font-size:13px">{{ item.detail }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if attention.truncated %}<div class="muted" style="margin-top:6px">…and more — clear these first.</div>{% endif %}
+</div>
+{% endif %}

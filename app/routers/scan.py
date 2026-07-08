@@ -15,10 +15,15 @@ from fastapi import APIRouter, Depends, Form, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..security import sign_token, verify_token
 from ..services import inventory_service
 from ..templating import render
 
 router = APIRouter()
+
+# Namespaced purpose for the signed undo tokens (the scan flow has no login,
+# and ledger ids are guessable — the token is not).
+_UNDO_PURPOSE = "scan-undo"
 
 
 def _load(db: Session, tag_id: str):
@@ -26,6 +31,20 @@ def _load(db: Session, tag_id: str):
     if inv is None:
         return None
     return inv
+
+
+def _undo_token(transaction_id: int) -> str:
+    return sign_token(_UNDO_PURPOSE, transaction_id)
+
+
+def _undo(db: Session, inv, transaction_id: int, token: str):
+    """Shared guard + service call for both undo endpoints. Returns (result, error)."""
+    if not verify_token(_UNDO_PURPOSE, transaction_id, token):
+        return None, "This undo link is not valid."
+    try:
+        return inventory_service.undo_removal(db, transaction_id=transaction_id, inventory=inv), None
+    except inventory_service.InventoryError as exc:
+        return None, str(exc)
 
 
 @router.get("/scan/{tag_id}")
@@ -62,6 +81,7 @@ def scan_submit(
             db, inventory=inv, quantity=quantity, employee_id=employee_id, source="scan"
         )
     db.refresh(inv)
+    undo_token = _undo_token(result.transaction.id) if result and result.transaction else None
     return render(
         request,
         "scan_result.html",
@@ -73,6 +93,39 @@ def scan_submit(
             "quantity": quantity,
             "result": result,
             "error": error,
+            "undo_token": undo_token,
+            "undone": False,
+        },
+    )
+
+
+@router.post("/scan/{tag_id}/undo")
+def scan_undo(
+    tag_id: str,
+    request: Request,
+    txn_id: int = Form(...),
+    token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """No-JS fallback: undo the removal and show a confirmation page."""
+    inv = _load(db, tag_id)
+    if inv is None:
+        return render(request, "scan_unknown.html", {"tag_id": tag_id})
+    result, error = _undo(db, inv, txn_id, token)
+    db.refresh(inv)
+    return render(
+        request,
+        "scan_result.html",
+        {
+            "inv": inv,
+            "product": inv.product,
+            "store": inv.store,
+            "tag_id": tag_id,
+            "quantity": 0,
+            "result": result,
+            "error": error,
+            "undo_token": None,
+            "undone": result is not None,
         },
     )
 
@@ -102,4 +155,28 @@ def scan_submit_json(
         "message": f"Removed {qty_label} {name}. New count: {result.quantity_after:g}.",
         "new_count": result.quantity_after,
         "unit": inv.product.unit_of_measure,
+        "txn_id": result.transaction.id if result.transaction else None,
+        "undo_token": _undo_token(result.transaction.id) if result.transaction else None,
+    }
+
+
+@router.post("/api/scan/{tag_id}/undo")
+def scan_undo_json(
+    tag_id: str,
+    request: Request,
+    txn_id: int = Form(...),
+    token: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """JSON undo used by the page's JS."""
+    inv = _load(db, tag_id)
+    if inv is None:
+        return {"ok": False, "error": "Unknown tag"}
+    result, error = _undo(db, inv, txn_id, token)
+    if error:
+        return {"ok": False, "error": error}
+    return {
+        "ok": True,
+        "message": f"Undone. Count back to {result.quantity_after:g}.",
+        "new_count": result.quantity_after,
     }

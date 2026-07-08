@@ -1,11 +1,12 @@
 """Admin setup: stores, products, store inventory/par/tags, users, Unleashed settings."""
 from __future__ import annotations
 
+import math
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -310,6 +311,62 @@ def inventory_page(
         {"stores": stores, "store_id": sid, "rows": rows, "products": products, "editing": editing,
          "base_url": get_settings().base_url, "msg": msg, "err": err},
     )
+
+
+@router.post("/inventory/bulk-pars")
+async def inventory_bulk_pars(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    """Save every par/min input on the store inventory table in one go.
+
+    Parsing is driven by the store's own rows (form values are looked up as
+    par_<rowid> / min_<rowid>, never scanned), so unknown fields are ignored
+    and rows of other stores can't be touched. Blank, negative and non-finite
+    values are rejected. All changes go out as ONE bulk UPDATE.
+    """
+    form = await request.form()
+    try:
+        store_id = int(str(form.get("store_id", "")))
+    except ValueError:
+        return _redirect("/admin/inventory", err="Missing store.")
+
+    def parse(raw) -> float | None:
+        try:
+            value = float(str(raw))
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) and value >= 0 else None
+
+    changes: list[dict] = []
+    invalid = 0
+    rows = db.execute(select(StoreInventory).where(StoreInventory.store_id == store_id)).scalars()
+    for inv in rows:
+        new_par, new_min = inv.par_level, inv.minimum_level
+        for field, current in (("par", inv.par_level), ("min", inv.minimum_level)):
+            raw = form.get(f"{field}_{inv.id}")
+            if raw is None:
+                continue  # row not on the submitted page — leave untouched
+            value = parse(raw)
+            if value is None:
+                invalid += 1
+            elif field == "par":
+                new_par = value
+            else:
+                new_min = value
+        if new_par != inv.par_level or new_min != inv.minimum_level:
+            changes.append({"id": inv.id, "par_level": new_par, "minimum_level": new_min})
+
+    if changes:
+        # One executemany UPDATE by primary key instead of a round trip per row.
+        db.execute(update(StoreInventory), changes)
+        db.commit()
+
+    msg = f"Saved par levels — {len(changes)} item(s) changed."
+    if invalid:
+        msg += f" {invalid} value(s) were invalid (blank, negative or not a number) and left unchanged."
+    return _redirect(f"/admin/inventory?store_id={store_id}", msg=msg)
 
 
 @router.post("/inventory/{item_id}/delete")

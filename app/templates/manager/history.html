@@ -32,7 +32,7 @@
       <tr>
         <td class="muted" style="white-space:nowrap">{{ txn.timestamp.strftime('%b %d %H:%M') }}</td>
         <td>{{ product.display_name }}</td>
-        <td><span class="pill {{ 'ok' if txn.transaction_type == 'UNLEASHED_RECEIPT' else ('warn' if txn.transaction_type == 'STORE_REMOVAL' else ('info' if txn.transaction_type == 'COUNT_ADJUSTMENT' else 'muted')) }}">{{ txn.transaction_type }}</span></td>
+        <td><span class="pill {{ 'ok' if txn.transaction_type == 'UNLEASHED_RECEIPT' else ('warn' if txn.transaction_type == 'STORE_REMOVAL' else ('info' if txn.transaction_type in ['COUNT_ADJUSTMENT', 'SCAN_UNDO'] else 'muted')) }}">{{ txn.transaction_type }}</span></td>
         <td class="right">
           {% if txn.quantity_delta > 0 %}<b style="color:#166534">+{{ txn.quantity_delta | qty }}</b>
           {% elif txn.quantity_delta < 0 %}<b style="color:#991b1b">−{{ (-txn.quantity_delta) | qty }}</b>
