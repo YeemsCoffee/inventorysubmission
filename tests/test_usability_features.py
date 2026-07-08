@@ -170,6 +170,29 @@ def test_bulk_pars_updates_only_valid_rows(admin_client, db, inventory, store, p
     assert db.get(StoreInventory, inv2.id).minimum_level == 0  # negative rejected
 
 
+def test_bulk_pars_rejects_non_finite_values(admin_client, db, inventory, store):
+    r = admin_client.post(
+        "/admin/inventory/bulk-pars",
+        data={"store_id": store.id, f"par_{inventory.id}": "nan", f"min_{inventory.id}": "inf"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and "0+item" in r.headers["location"].replace("%20", "+")
+    db.expire_all()
+    assert db.get(StoreInventory, inventory.id).par_level == 24  # untouched
+
+
+def test_bulk_pars_accepts_fractional_values(admin_client, db, inventory, store):
+    r = admin_client.post(
+        "/admin/inventory/bulk-pars",
+        data={"store_id": store.id, f"par_{inventory.id}": "2.5", f"min_{inventory.id}": "0.5"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    db.expire_all()
+    assert db.get(StoreInventory, inventory.id).par_level == 2.5
+    assert db.get(StoreInventory, inventory.id).minimum_level == 0.5
+
+
 def test_bulk_pars_ignores_rows_of_other_stores(admin_client, db, inventory, store):
     other = Store(store_code="G", store_name="Gardena", unleashed_customer_code="G", active=True)
     db.add(other)
@@ -200,17 +223,28 @@ def test_attention_collects_errors_and_stale_orders(db, store):
     db.commit()
 
     att = attention_service.get_attention(db)
-    assert att["total"] == 3
+    assert att["total"] == 3 and att["truncated"] is False
     kinds = {i["kind"] for i in att["items"]}
     assert kinds == {"sync_error", "receipt_error", "stale"}
 
 
-def test_attention_banner_renders_on_admin_home(admin_client, db, store):
+def test_attention_is_bounded_under_bulk_failures(db, store):
+    for i in range(attention_service.MAX_ITEMS + 5):
+        db.add(DailyRequest(store_id=store.id, status=RequestStatus.SYNC_ERROR, error_message=f"e{i}"))
+    db.commit()
+    att = attention_service.get_attention(db)
+    assert att["total"] == attention_service.MAX_ITEMS
+    assert att["truncated"] is True
+
+
+def test_attention_banner_renders_on_every_staff_page(admin_client, db, store):
     db.add(DailyRequest(store_id=store.id, status=RequestStatus.SYNC_ERROR, error_message="bad customer"))
     db.commit()
-    r = admin_client.get("/admin")
-    assert r.status_code == 200
-    assert "Needs attention" in r.text and "failed to submit" in r.text
+    # Global via base.html: home page AND working pages, not just the dashboard.
+    for url in ["/admin", "/manager/inventory", "/admin/settings", "/warehouse/requests"]:
+        r = admin_client.get(url)
+        assert r.status_code == 200, url
+        assert "Needs attention" in r.text and "failed to submit" in r.text, url
 
 
 def test_no_banner_when_all_clear(admin_client, db, store):

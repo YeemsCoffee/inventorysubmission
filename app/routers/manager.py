@@ -11,7 +11,7 @@ from ..enums import Role
 from ..integrations.unleashed import UnleashedError
 from ..models import DailyRequest, InventoryTransaction, Product, Store, StoreInventory, User
 from ..security import require_roles
-from ..services import attention_service, inventory_service, request_service, settings_service
+from ..services import inventory_service, request_service, settings_service
 from ..templating import render
 
 router = APIRouter(prefix="/manager")
@@ -131,8 +131,7 @@ def requests_list(
     return render(
         request,
         "manager/requests.html",
-        {"stores": _stores(db), "store_id": sid, "requests": reqs,
-         "attention": attention_service.get_attention(db, store_id=sid), "attention_links": True},
+        {"stores": _stores(db), "store_id": sid, "requests": reqs},
     )
 
 

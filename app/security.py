@@ -42,6 +42,21 @@ def verify_password(password: str, stored: str | None) -> bool:
         return False
 
 
+def sign_token(purpose: str, value: str | int) -> str:
+    """Compact HMAC token binding `value` to a named purpose (e.g. a signed
+    undo link). Purposes are namespaced so tokens can never be replayed from
+    one feature to another."""
+    from .config import get_settings  # local import: settings cache is built lazily
+
+    secret = get_settings().secret_key.encode("utf-8")
+    msg = f"{purpose}:{value}".encode("utf-8")
+    return hmac.new(secret, msg, hashlib.sha256).hexdigest()[:24]
+
+
+def verify_token(purpose: str, value: str | int, token: str) -> bool:
+    return hmac.compare_digest(token, sign_token(purpose, value))
+
+
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User | None:
     user_id = request.session.get("user_id")
     if not user_id:

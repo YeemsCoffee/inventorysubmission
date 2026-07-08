@@ -11,18 +11,19 @@ Use"). No login, no store/warehouse/action pickers, no item search.
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
-
 from fastapi import APIRouter, Depends, Form, Request
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..database import get_db
+from ..security import sign_token, verify_token
 from ..services import inventory_service
 from ..templating import render
 
 router = APIRouter()
+
+# Namespaced purpose for the signed undo tokens (the scan flow has no login,
+# and ledger ids are guessable — the token is not).
+_UNDO_PURPOSE = "scan-undo"
 
 
 def _load(db: Session, tag_id: str):
@@ -33,15 +34,12 @@ def _load(db: Session, tag_id: str):
 
 
 def _undo_token(transaction_id: int) -> str:
-    """Signed token proving the caller made this removal (the scan flow has no
-    login, and ledger ids are guessable — the token is not)."""
-    secret = get_settings().secret_key.encode("utf-8")
-    return hmac.new(secret, f"undo:{transaction_id}".encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+    return sign_token(_UNDO_PURPOSE, transaction_id)
 
 
 def _undo(db: Session, inv, transaction_id: int, token: str):
     """Shared guard + service call for both undo endpoints. Returns (result, error)."""
-    if not hmac.compare_digest(token, _undo_token(transaction_id)):
+    if not verify_token(_UNDO_PURPOSE, transaction_id, token):
         return None, "This undo link is not valid."
     try:
         return inventory_service.undo_removal(db, transaction_id=transaction_id, inventory=inv), None

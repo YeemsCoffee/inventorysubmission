@@ -27,6 +27,7 @@
   </nav>
   {% endif %}
   <main class="{% block main_class %}container{% endblock %}">
+    {% if not hide_nav %}{% include "partials/attention.html" %}{% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>

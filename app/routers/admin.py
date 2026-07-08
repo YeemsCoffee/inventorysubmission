@@ -1,11 +1,12 @@
 """Admin setup: stores, products, store inventory/par/tags, users, Unleashed settings."""
 from __future__ import annotations
 
+import math
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,7 +17,7 @@ from ..integrations.unleashed import UnleashedClient, UnleashedError
 from ..models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, Store, StoreInventory, User
 from ..scheduler import reschedule_auto_submit
 from ..security import hash_password, require_roles
-from ..services import attention_service, settings_service
+from ..services import settings_service
 from ..services.product_import import ImportFormatError, ensure_inventory_rows, import_products_csv
 from ..templating import render
 
@@ -42,16 +43,7 @@ def admin_home(request: Request, db: Session = Depends(get_db), user: User = Adm
         "inventory": db.query(StoreInventory).count(),
         "users": db.query(User).count(),
     }
-    return render(
-        request,
-        "admin/home.html",
-        {
-            "counts": counts,
-            "unleashed_configured": settings.unleashed_configured,
-            "attention": attention_service.get_attention(db),
-            "attention_links": True,
-        },
-    )
+    return render(request, "admin/home.html", {"counts": counts, "unleashed_configured": settings.unleashed_configured})
 
 
 # ---- Stores ----------------------------------------------------------
@@ -329,47 +321,51 @@ async def inventory_bulk_pars(
 ):
     """Save every par/min input on the store inventory table in one go.
 
-    Fields arrive as par_<rowid> / min_<rowid>. Rows outside the posted store,
-    unknown ids, blanks and negatives are counted as skipped, never applied.
+    Parsing is driven by the store's own rows (form values are looked up as
+    par_<rowid> / min_<rowid>, never scanned), so unknown fields are ignored
+    and rows of other stores can't be touched. Blank, negative and non-finite
+    values are rejected. All changes go out as ONE bulk UPDATE.
     """
     form = await request.form()
     try:
-        store_id = int(form.get("store_id", ""))
+        store_id = int(str(form.get("store_id", "")))
     except ValueError:
         return _redirect("/admin/inventory", err="Missing store.")
 
-    rows = {
-        inv.id: inv
-        for inv in db.execute(
-            select(StoreInventory).where(StoreInventory.store_id == store_id)
-        ).scalars()
-    }
-    changed_rows: set[int] = set()
-    invalid = 0
-    for key, raw in form.items():
-        if not (key.startswith("par_") or key.startswith("min_")):
-            continue
+    def parse(raw) -> float | None:
         try:
-            item_id = int(key.split("_", 1)[1])
             value = float(str(raw))
-        except (ValueError, IndexError):
-            invalid += 1
-            continue
-        inv = rows.get(item_id)
-        if inv is None or value < 0:
-            invalid += 1
-            continue
-        if key.startswith("par_") and inv.par_level != value:
-            inv.par_level = value
-            changed_rows.add(item_id)
-        elif key.startswith("min_") and inv.minimum_level != value:
-            inv.minimum_level = value
-            changed_rows.add(item_id)
-    db.commit()
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) and value >= 0 else None
 
-    msg = f"Saved par levels — {len(changed_rows)} item(s) changed."
+    changes: list[dict] = []
+    invalid = 0
+    rows = db.execute(select(StoreInventory).where(StoreInventory.store_id == store_id)).scalars()
+    for inv in rows:
+        new_par, new_min = inv.par_level, inv.minimum_level
+        for field, current in (("par", inv.par_level), ("min", inv.minimum_level)):
+            raw = form.get(f"{field}_{inv.id}")
+            if raw is None:
+                continue  # row not on the submitted page — leave untouched
+            value = parse(raw)
+            if value is None:
+                invalid += 1
+            elif field == "par":
+                new_par = value
+            else:
+                new_min = value
+        if new_par != inv.par_level or new_min != inv.minimum_level:
+            changes.append({"id": inv.id, "par_level": new_par, "minimum_level": new_min})
+
+    if changes:
+        # One executemany UPDATE by primary key instead of a round trip per row.
+        db.execute(update(StoreInventory), changes)
+        db.commit()
+
+    msg = f"Saved par levels — {len(changes)} item(s) changed."
     if invalid:
-        msg += f" {invalid} value(s) were invalid (blank or negative) and left unchanged."
+        msg += f" {invalid} value(s) were invalid (blank, negative or not a number) and left unchanged."
     return _redirect(f"/admin/inventory?store_id={store_id}", msg=msg)
 
 

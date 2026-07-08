@@ -81,6 +81,10 @@ def _apply(
     unleashed_shipment_guid: str | None = None,
     idempotency_key: str | None = None,
 ) -> InventoryTransaction:
+    # Keep the classification set honest: only count-affecting types may move
+    # the count (audit markers go through record_audit instead).
+    if transaction_type not in TransactionType.INVENTORY_AFFECTING:
+        raise InventoryError(f"{transaction_type} is not a count-affecting transaction type")
     before = inv.current_count
     after = before + delta
     txn = InventoryTransaction(

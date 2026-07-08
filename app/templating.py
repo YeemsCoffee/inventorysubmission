@@ -37,12 +37,37 @@ def session_user(request: Request) -> dict | None:
     }
 
 
+def _attention_for(user: dict | None) -> dict | None:
+    """Needs-attention items for staff pages, rendered globally via base.html.
+
+    One bounded, indexed query per authenticated page view; managers see their
+    own store's problems, warehouse/admin see everything. Never breaks a page:
+    any failure degrades to no banner.
+    """
+    if user is None or user.get("role") == "EMPLOYEE":
+        return None
+    try:
+        from .database import SessionLocal
+        from .services import attention_service
+
+        db = SessionLocal()
+        try:
+            store_id = user.get("store_id") if user.get("role") == "STORE_MANAGER" else None
+            return attention_service.get_attention(db, store_id=store_id)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - the banner must never take a page down
+        return None
+
+
 def render(request: Request, name: str, context: dict | None = None):
     """Render a template with common context (request, user, settings) merged in."""
+    user = session_user(request)
     ctx = {
         "request": request,
-        "user": session_user(request),
+        "user": user,
         "settings": get_settings(),
+        "attention": _attention_for(user),
     }
     if context:
         ctx.update(context)
