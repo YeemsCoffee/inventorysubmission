@@ -10,6 +10,7 @@ class TransactionType:
     """Local ledger transaction types. Every inventory movement creates one."""
 
     STORE_REMOVAL = "STORE_REMOVAL"                    # employee took stock for café use (delta < 0)
+    SCAN_UNDO = "SCAN_UNDO"                            # employee undid a just-made removal (delta > 0)
     UNLEASHED_RECEIPT = "UNLEASHED_RECEIPT"            # fulfilled qty received (delta > 0)
     COUNT_ADJUSTMENT = "COUNT_ADJUSTMENT"              # manager correction (delta any)
     # Audit-only markers (delta == 0), recorded for a full ledger:
@@ -19,7 +20,7 @@ class TransactionType:
     REQUEST_CANCELLED = "REQUEST_CANCELLED"
     SYNC_ERROR = "SYNC_ERROR"
 
-    INVENTORY_AFFECTING = {STORE_REMOVAL, UNLEASHED_RECEIPT, COUNT_ADJUSTMENT}
+    INVENTORY_AFFECTING = {STORE_REMOVAL, SCAN_UNDO, UNLEASHED_RECEIPT, COUNT_ADJUSTMENT}
 
 
 class RequestStatus:

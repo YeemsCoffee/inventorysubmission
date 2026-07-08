@@ -2,6 +2,7 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
 <h1>Admin</h1>
+{% include "partials/attention.html" %}
 <div class="row">
   <div class="card"><h2>{{ counts.stores }}</h2><div class="muted">Stores</div><a class="btn ghost" href="/admin/stores">Manage →</a></div>
   <div class="card"><h2>{{ counts.products }}</h2><div class="muted">Products</div><a class="btn ghost" href="/admin/products">Manage →</a></div>

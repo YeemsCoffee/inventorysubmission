@@ -11,7 +11,7 @@ from ..enums import Role
 from ..integrations.unleashed import UnleashedError
 from ..models import DailyRequest, Store, User
 from ..security import require_roles
-from ..services import receipt_service, request_service, sync_service
+from ..services import attention_service, receipt_service, request_service, sync_service
 from ..templating import render
 
 router = APIRouter(prefix="/warehouse")
@@ -26,7 +26,12 @@ def requests_status(request: Request, db: Session = Depends(get_db), user: User 
     )
     stores = {s.id: s for s in db.execute(select(Store)).scalars()}
     rows = [{"req": r, "store": stores.get(r.store_id)} for r in reqs]
-    return render(request, "warehouse/requests.html", {"rows": rows})
+    return render(
+        request,
+        "warehouse/requests.html",
+        # No links: warehouse users act via this page's own retry buttons.
+        {"rows": rows, "attention": attention_service.get_attention(db), "attention_links": False},
+    )
 
 
 @router.post("/requests/{request_id}/retry-submit")

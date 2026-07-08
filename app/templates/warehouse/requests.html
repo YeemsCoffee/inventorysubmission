@@ -2,6 +2,7 @@
 {% block title %}Sync Status{% endblock %}
 {% block content %}
 <h1>Replenishment Sync Status</h1>
+{% include "partials/attention.html" %}
 
 <form method="post" action="/warehouse/poll-now" class="card" style="display:flex; align-items:center; justify-content:space-between">
   <span class="muted">Manually poll Unleashed for completed orders (the scheduler also does this automatically).</span>

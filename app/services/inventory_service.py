@@ -12,7 +12,7 @@ Rules enforced here:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +23,10 @@ from ..enums import TransactionType
 from ..models import InventoryTransaction, StoreInventory
 
 settings = get_settings()
+
+# Employees may undo their own scan for this long; after that a manager
+# correction is the honest way to fix the count.
+UNDO_WINDOW_MINUTES = 15
 
 
 class InventoryError(Exception):
@@ -128,6 +132,66 @@ def record_removal(
     db.commit()
     db.refresh(txn)
     db.refresh(inv)
+    return MutationResult(True, txn.quantity_before, txn.quantity_after, txn)
+
+
+def undo_removal(
+    db: Session,
+    *,
+    transaction_id: int,
+    inventory: StoreInventory,
+) -> MutationResult:
+    """Reverse a just-made STORE_REMOVAL (employee tapped Undo).
+
+    Idempotent (a removal can be undone at most once), restricted to the item
+    the tag points at, and only within UNDO_WINDOW_MINUTES of the removal.
+    """
+    original = db.get(InventoryTransaction, transaction_id)
+    if original is None or original.transaction_type != TransactionType.STORE_REMOVAL:
+        raise InventoryError("That removal can't be found.")
+    if original.store_id != inventory.store_id or original.product_id != inventory.product_id:
+        raise InventoryError("That removal belongs to a different item.")
+    if original.quantity_delta >= 0:
+        raise InventoryError("That entry isn't an undoable removal.")
+    if datetime.utcnow() - original.timestamp > timedelta(minutes=UNDO_WINDOW_MINUTES):
+        raise InventoryError("Too late to undo — ask a manager to correct the count.")
+
+    key = f"undo-removal:{original.id}"
+    existing = db.execute(
+        select(InventoryTransaction).where(InventoryTransaction.idempotency_key == key)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return MutationResult(
+            False, existing.quantity_before, existing.quantity_after, existing, reason="duplicate"
+        )
+
+    inv = _lock_inventory(db, original.store_id, original.product_id)
+    txn = _apply(
+        db,
+        inv=inv,
+        delta=abs(original.quantity_delta),
+        transaction_type=TransactionType.SCAN_UNDO,
+        source="scan-undo",
+        employee_id=original.employee_id,
+        note=f"Undo of removal #{original.id}",
+        idempotency_key=key,
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        # Double-tap race: someone else undid it first — report as duplicate.
+        db.rollback()
+        existing = db.execute(
+            select(InventoryTransaction).where(InventoryTransaction.idempotency_key == key)
+        ).scalar_one_or_none()
+        return MutationResult(
+            False,
+            existing.quantity_before if existing else 0,
+            existing.quantity_after if existing else 0,
+            existing,
+            reason="duplicate",
+        )
+    db.refresh(txn)
     return MutationResult(True, txn.quantity_before, txn.quantity_after, txn)
 
 

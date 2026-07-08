@@ -21,6 +21,12 @@
 </form>
 {% endif %}
 
+<!-- The bulk form itself sits outside the table; each par/min input references
+     it via form="bulkpars" so the per-row Delete forms don't end up nested. -->
+<form method="post" action="/admin/inventory/bulk-pars" id="bulkpars">
+  <input type="hidden" name="store_id" value="{{ store_id }}">
+</form>
+
 <div class="card">
   <table>
     <thead><tr><th>Product</th><th class="right">Count</th><th class="right">Par</th><th class="right">Min</th>
@@ -30,8 +36,8 @@
       <tr>
         <td>{{ product.display_name }} <span class="muted">({{ product.product_code }})</span></td>
         <td class="right">{{ inv.current_count | qty }}</td>
-        <td class="right">{{ inv.par_level | qty }}</td>
-        <td class="right">{{ inv.minimum_level | qty }}</td>
+        <td class="right"><input type="number" name="par_{{ inv.id }}" value="{{ inv.par_level | qty }}" min="0" step="1" required form="bulkpars" style="width:72px"></td>
+        <td class="right"><input type="number" name="min_{{ inv.id }}" value="{{ inv.minimum_level | qty }}" min="0" step="1" required form="bulkpars" style="width:72px"></td>
         <td>{{ inv.storage_location or '—' }}</td>
         <td>{{ inv.tag_id or '—' }}</td>
         <td>{% if inv.tag_id %}<a href="{{ base_url }}/scan/{{ inv.tag_id }}">/scan/{{ inv.tag_id }}</a>{% else %}—{% endif %}</td>
@@ -48,6 +54,10 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if rows %}
+  <button class="btn" type="submit" form="bulkpars" style="margin-top:14px">Save all par / min levels</button>
+  <span class="muted" style="margin-left:8px">Edits every row's par and minimum in one save.</span>
+  {% endif %}
 </div>
 
 <div class="card">

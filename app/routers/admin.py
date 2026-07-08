@@ -16,7 +16,7 @@ from ..integrations.unleashed import UnleashedClient, UnleashedError
 from ..models import DailyRequest, DailyRequestLine, InventoryTransaction, Product, Store, StoreInventory, User
 from ..scheduler import reschedule_auto_submit
 from ..security import hash_password, require_roles
-from ..services import settings_service
+from ..services import attention_service, settings_service
 from ..services.product_import import ImportFormatError, ensure_inventory_rows, import_products_csv
 from ..templating import render
 
@@ -42,7 +42,16 @@ def admin_home(request: Request, db: Session = Depends(get_db), user: User = Adm
         "inventory": db.query(StoreInventory).count(),
         "users": db.query(User).count(),
     }
-    return render(request, "admin/home.html", {"counts": counts, "unleashed_configured": settings.unleashed_configured})
+    return render(
+        request,
+        "admin/home.html",
+        {
+            "counts": counts,
+            "unleashed_configured": settings.unleashed_configured,
+            "attention": attention_service.get_attention(db),
+            "attention_links": True,
+        },
+    )
 
 
 # ---- Stores ----------------------------------------------------------
@@ -310,6 +319,58 @@ def inventory_page(
         {"stores": stores, "store_id": sid, "rows": rows, "products": products, "editing": editing,
          "base_url": get_settings().base_url, "msg": msg, "err": err},
     )
+
+
+@router.post("/inventory/bulk-pars")
+async def inventory_bulk_pars(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = AdminUser,
+):
+    """Save every par/min input on the store inventory table in one go.
+
+    Fields arrive as par_<rowid> / min_<rowid>. Rows outside the posted store,
+    unknown ids, blanks and negatives are counted as skipped, never applied.
+    """
+    form = await request.form()
+    try:
+        store_id = int(form.get("store_id", ""))
+    except ValueError:
+        return _redirect("/admin/inventory", err="Missing store.")
+
+    rows = {
+        inv.id: inv
+        for inv in db.execute(
+            select(StoreInventory).where(StoreInventory.store_id == store_id)
+        ).scalars()
+    }
+    changed_rows: set[int] = set()
+    invalid = 0
+    for key, raw in form.items():
+        if not (key.startswith("par_") or key.startswith("min_")):
+            continue
+        try:
+            item_id = int(key.split("_", 1)[1])
+            value = float(str(raw))
+        except (ValueError, IndexError):
+            invalid += 1
+            continue
+        inv = rows.get(item_id)
+        if inv is None or value < 0:
+            invalid += 1
+            continue
+        if key.startswith("par_") and inv.par_level != value:
+            inv.par_level = value
+            changed_rows.add(item_id)
+        elif key.startswith("min_") and inv.minimum_level != value:
+            inv.minimum_level = value
+            changed_rows.add(item_id)
+    db.commit()
+
+    msg = f"Saved par levels — {len(changed_rows)} item(s) changed."
+    if invalid:
+        msg += f" {invalid} value(s) were invalid (blank or negative) and left unchanged."
+    return _redirect(f"/admin/inventory?store_id={store_id}", msg=msg)
 
 
 @router.post("/inventory/{item_id}/delete")

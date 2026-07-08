@@ -7,11 +7,23 @@
   <div class="scan-name">{{ product.display_name }}</div>
   {% if error %}
     <div class="scan-confirm scan-error">{{ error }}</div>
+  {% elif undone %}
+    <div class="scan-confirm">
+      Undone ↩<br>
+      Count back to <b>{{ inv.current_count | qty }}</b> {{ product.unit_of_measure }}
+    </div>
   {% else %}
     <div class="scan-confirm">
       Removed {{ quantity | qty }} {{ product.display_name }}.<br>
       New count: <b>{{ inv.current_count | qty }}</b> {{ product.unit_of_measure }}
     </div>
+    {% if undo_token and result and result.transaction %}
+    <form method="post" action="/scan/{{ tag_id }}/undo" style="margin-top:12px; text-align:center">
+      <input type="hidden" name="txn_id" value="{{ result.transaction.id }}">
+      <input type="hidden" name="token" value="{{ undo_token }}">
+      <button class="btn ghost" type="submit">Undo this</button>
+    </form>
+    {% endif %}
   {% endif %}
   <a class="btn secondary" style="margin-top:16px; text-align:center" href="/scan/{{ tag_id }}">Remove more</a>
 {% endblock %}

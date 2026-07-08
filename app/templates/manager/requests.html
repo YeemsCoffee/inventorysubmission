@@ -2,6 +2,7 @@
 {% block title %}Daily Requests{% endblock %}
 {% block content %}
 <h1>Daily Replenishment Requests</h1>
+{% include "partials/attention.html" %}
 
 <form method="get" action="/manager/requests" class="card" style="display:flex; gap:12px; align-items:flex-end">
   <div style="flex:1 1 240px">

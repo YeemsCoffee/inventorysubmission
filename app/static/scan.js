@@ -62,7 +62,7 @@
       .then(function (res) {
         if (res.ok) {
           if (curCount) curCount.textContent = formatNum(res.new_count);
-          flash(res.message, false);
+          flash(res.message, false, res.txn_id ? { txnId: res.txn_id, token: res.undo_token } : null);
         } else {
           flash(res.error || "Something went wrong.", true);
           submitBtn.disabled = false;
@@ -75,17 +75,41 @@
     return (Math.round(n * 100) / 100).toString();
   }
 
-  function flash(msg, isError) {
+  function flash(msg, isError, undo) {
     form.style.display = "none";
     confirm.style.display = "block";
     confirm.className = "scan-confirm" + (isError ? " scan-error" : "");
-    confirm.innerHTML = "<div>" + msg + "</div>" +
-      '<button class="btn secondary" style="margin-top:14px" id="againBtn">Remove more</button>';
+    var html = "<div>" + msg + "</div>";
+    if (undo) {
+      html += '<button class="btn ghost" style="margin-top:14px; margin-right:8px" id="undoBtn">Undo</button>';
+    }
+    html += '<button class="btn secondary" style="margin-top:14px" id="againBtn">Remove more</button>';
+    confirm.innerHTML = html;
     document.getElementById("againBtn").addEventListener("click", function () {
       confirm.style.display = "none";
       form.style.display = "block";
       submitBtn.disabled = false;
       setQty(1);
     });
+    if (undo) {
+      var undoBtn = document.getElementById("undoBtn");
+      undoBtn.addEventListener("click", function () {
+        undoBtn.disabled = true;
+        var data = new FormData();
+        data.append("txn_id", undo.txnId);
+        data.append("token", undo.token);
+        fetch("/api/scan/" + encodeURIComponent(tag) + "/undo", { method: "POST", body: data })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (res.ok) {
+              if (curCount) curCount.textContent = formatNum(res.new_count);
+              flash(res.message, false); // no second undo offered
+            } else {
+              flash(res.error || "Could not undo.", true);
+            }
+          })
+          .catch(function () { undoBtn.disabled = false; });
+      });
+    }
   }
 })();
